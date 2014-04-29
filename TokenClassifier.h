@@ -24,8 +24,12 @@ class OutputWriter;
 
 struct ParserHints {
   llvm::StringRef FileName;
-  std::vector<std::string> TypePositions;
-  void normalize() { std::sort(TypePositions.begin(), TypePositions.end()); }
+  std::vector<unsigned> TypeOffsets;
+  void normalize() {
+    std::sort(TypeOffsets.begin(), TypeOffsets.end());
+    TypeOffsets.erase(std::unique(TypeOffsets.begin(), TypeOffsets.end()),
+                      TypeOffsets.end());
+  }
 };
 
 ParserHints collectParserHints(llvm::StringRef SourceFile);

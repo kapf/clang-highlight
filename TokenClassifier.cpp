@@ -47,20 +47,6 @@ bool isCharLiteral(tok::TokenKind TK) {
   }
 }
 
-bool isExtendedStringLiteral(tok::TokenKind TK) {
-  switch (TK) {
-  case tok::string_literal:
-  case tok::wide_string_literal:
-  case tok::angle_string_literal:
-  case tok::utf8_string_literal:
-  case tok::utf16_string_literal:
-  case tok::utf32_string_literal:
-    return true;
-  default:
-    return false;
-  }
-}
-
 bool isKeyword(tok::TokenKind TK) {
   switch (TK) {
 #define KEYWORD(X, Y) case tok::kw_##X:
@@ -74,7 +60,7 @@ bool isKeyword(tok::TokenKind TK) {
 TokenClass convertTokenKindToTokenClass(tok::TokenKind TK) {
   if (isCharLiteral(TK))
     return TokenClass::Char;
-  if (isExtendedStringLiteral(TK))
+  if (isStringLiteral(TK))
     return TokenClass::String;
   if (isKeyword(TK))
     return TokenClass::Keyword;
@@ -147,8 +133,8 @@ void highlight(std::unique_ptr<llvm::MemoryBuffer> Source,
       ThisTok.setKind(Info.getTokenID());
     }
 
-    std::string ThisLoc = ThisTok.getLocation().printToString(SourceMgr);
-    if (std::binary_search(PH.TypePositions.begin(), PH.TypePositions.end(),
+    unsigned ThisLoc = SourceMgr.getFileOffset(ThisTok.getLocation());
+    if (std::binary_search(PH.TypeOffsets.begin(), PH.TypeOffsets.end(),
                            ThisLoc)) {
       ThisTok.setKind(tok::annot_typename);
     }

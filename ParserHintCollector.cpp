@@ -9,7 +9,7 @@
 #include "llvm/Support/CommandLine.h"
 #include "clang/Tooling/CommonOptionsParser.h"
 #include "TokenClassifier.h"
-
+#include "llvm/Support/Debug.h"
 using namespace clang::tooling;
 using namespace llvm;
 
@@ -25,8 +25,10 @@ public:
       : Context(Context), PH(PH) {}
 
   bool VisitTypeLoc(TypeLoc TL) {
-    PH->TypePositions.push_back(
-        TL.getBeginLoc().printToString(Context->getSourceManager()));
+    auto &SM = Context->getSourceManager();
+    SourceLocation SpellingLoc = SM.getSpellingLoc(TL.getBeginLoc());
+    if (SM.getFilename(SpellingLoc) == PH->FileName)
+      PH->TypeOffsets.push_back(SM.getFileOffset(SpellingLoc));
     return true;
   }
 
@@ -78,6 +80,8 @@ public:
 
 ParserHints collectParserHints(StringRef SourceFile) {
   ParserHints Hints;
+  Hints.FileName = SourceFile;
+
   std::string ErrMsg;
   if (CompilationDatabase *CDB =
           clang::tooling::CompilationDatabase::autoDetectFromSource(SourceFile,
@@ -88,7 +92,6 @@ ParserHints collectParserHints(StringRef SourceFile) {
   } else {
     llvm::errs() << "collectParserHints: " << ErrMsg << '\n';
   }
-  Hints.FileName = SourceFile;
   return Hints;
 }
 
