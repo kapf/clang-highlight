@@ -47,6 +47,7 @@ public:
     NoStmtClass = 0,
     DeclRefExprClass,
     LiteralConstantClass,
+    UnaryOperatorClass,
     BinaryOperatorClass,
   };
 
@@ -86,6 +87,22 @@ public:
 
   static bool classof(const Stmt *T) {
     return T->getStmtClass() == LiteralConstantClass;
+  }
+};
+
+class UnaryOperator : public Expr {
+public:
+  AnnotatedToken *OperatorTok;
+  std::unique_ptr<Expr> Value;
+
+  UnaryOperator(AnnotatedToken *OperatorTok, std::unique_ptr<Expr> Value)
+      : Expr(UnaryOperatorClass), OperatorTok(OperatorTok),
+        Value(std::move(Value)) {
+    OperatorTok->setASTReference(this);
+  }
+
+  static bool classof(const Stmt *T) {
+    return T->getStmtClass() == UnaryOperatorClass;
   }
 };
 

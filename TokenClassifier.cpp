@@ -103,8 +103,7 @@ void highlight(std::unique_ptr<llvm::MemoryBuffer> Source,
   bool PPMode;
   TokenClass Class = TokenClass::Other;
 
-
-  std::vector<AnnotatedToken> AllTokens;
+  std::vector<fuzzy::AnnotatedToken> AllTokens;
 
   for (;;) {
     Lex.LexFromRawLexer(ThisTok);
@@ -143,14 +142,14 @@ void highlight(std::unique_ptr<llvm::MemoryBuffer> Source,
       ThisTok.setKind(tok::annot_typename);
     }
 
-    AllTokens.push_back(AnnotatedToken(ThisTok));
+    AllTokens.push_back(fuzzy::AnnotatedToken(ThisTok));
 
     LastTok = ThisTok;
     LastTokenStart = ThisTokenStart;
   }
 
-  auto x = fuzzyparse(&*AllTokens.begin(), &*AllTokens.end());
-  printAST(*x, SourceMgr);
+  auto x = fuzzy::fuzzyparse(&*AllTokens.begin(), &*AllTokens.end());
+  fuzzy::printAST(*x, SourceMgr);
 }
 
 } // end namespace highlight

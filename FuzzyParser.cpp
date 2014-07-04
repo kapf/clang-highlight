@@ -14,7 +14,7 @@
 using namespace clang;
 
 namespace clang {
-namespace highlight {
+namespace fuzzy {
 
 namespace {
 struct TokenFilter {
@@ -33,12 +33,29 @@ struct TokenFilter {
 };
 } // end anonymous namespace
 
-// static int PrecedenceUnaryOperator = prec::PointerToMember + 1;
+static int PrecedenceUnaryOperator = prec::PointerToMember + 1;
 static int PrecedenceArrowAndPeriod = prec::PointerToMember + 2;
 
 static std::unique_ptr<Expr> parseExpression(TokenFilter &TF,
-                                             int Precedence = 0) {
+                                             int Precedence = 0);
+
+static std::unique_ptr<Expr> parseUnaryOperator(TokenFilter &TF) {
   assert(TF.peek() && "can't parse empty expression");
+
+  if (TF.peek()->Tok.getKind() == tok::star) {  
+    AnnotatedToken *Op = TF.next();
+    return llvm::make_unique<UnaryOperator>(Op, parseUnaryOperator(TF));
+  }
+
+  return parseExpression(TF, PrecedenceArrowAndPeriod);
+}
+
+static std::unique_ptr<Expr> parseExpression(TokenFilter &TF,
+                                             int Precedence) {
+  assert(TF.peek() && "can't parse empty expression");
+
+  if (Precedence == PrecedenceUnaryOperator)
+    return parseUnaryOperator(TF);
 
   if (Precedence > PrecedenceArrowAndPeriod) {
     if (TF.peek()->Tok.getKind() == tok::identifier)
@@ -46,7 +63,7 @@ static std::unique_ptr<Expr> parseExpression(TokenFilter &TF,
     if (isLiteral(TF.peek()->Tok.getKind()))
       return llvm::make_unique<LiteralConstant>(TF.next());
 
-    llvm_unreachable("TODO");
+    llvm_unreachable("expression not separable into operators and operands");
   }
   auto LeftExpr = parseExpression(TF, Precedence + 1);
 
@@ -86,8 +103,13 @@ static void printASTImpl(int Indent, const Stmt &stmt,
   } else if (auto *Lit = llvm::dyn_cast<LiteralConstant>(&stmt)) {
     llvm::dbgs() << std::string(Indent, ' ') << Lit->Tok->getText(SourceMgr)
                  << '\n';
+  } else if (auto *Unar = llvm::dyn_cast<UnaryOperator>(&stmt)) {
+    llvm::dbgs() << std::string(Indent, ' ')
+                 << Unar->OperatorTok->getText(SourceMgr)
+                 << ": ";
+    printASTImpl(0, *Unar->Value, SourceMgr);
   } else {
-    llvm_unreachable("TODO");
+    llvm_unreachable("TODO: unhandled fuzzy ast node");
   }
 }
 
@@ -95,5 +117,5 @@ void printAST(const Stmt &Root, const SourceManager &SourceMgr) {
   return printASTImpl(0, Root, SourceMgr);
 }
 
-} // end namespace highlight
+} // end namespace fuzzy
 } // end namespace clang
