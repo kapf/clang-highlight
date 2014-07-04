@@ -54,7 +54,7 @@ static void PrintVersion() {
 
 static bool parser_highlight(StringRef File, OutputFormat Format,
                              bool UseParser) {
-  ParserHints Hints = UseParser ? collectParserHints(File) : ParserHints();
+  ParserHints Hints = UseParser ? collectParserHints(File) : ParserHints(File);
 
   std::unique_ptr<llvm::MemoryBuffer> Source;
   if (auto err = llvm::MemoryBuffer::getFileOrSTDIN(File, Source)) {

@@ -6,14 +6,10 @@
 #include "clang/Frontend/FrontendActions.h"
 #include "clang/Tooling/CompilationDatabase.h"
 #include "clang/Tooling/Tooling.h"
-#include "llvm/Support/CommandLine.h"
-#include "clang/Tooling/CommonOptionsParser.h"
 #include "TokenClassifier.h"
-#include "llvm/Support/Debug.h"
+
 using namespace clang::tooling;
 using namespace llvm;
-
-cl::OptionCategory &getClangHighlightCategory();
 
 namespace clang {
 namespace highlight {

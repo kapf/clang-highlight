@@ -17,6 +17,7 @@
 #include "OutputWriter.h"
 #include <unordered_set>
 #include "TokenClassifier.h"
+#include "FuzzyAST.h"
 
 using namespace clang;
 
@@ -102,6 +103,9 @@ void highlight(std::unique_ptr<llvm::MemoryBuffer> Source,
   bool PPMode;
   TokenClass Class = TokenClass::Other;
 
+
+  std::vector<AnnotatedToken> AllTokens;
+
   for (;;) {
     Lex.LexFromRawLexer(ThisTok);
     ThisTokenStart = SourceMgr.getCharacterData(ThisTok.getLocation());
@@ -139,9 +143,14 @@ void highlight(std::unique_ptr<llvm::MemoryBuffer> Source,
       ThisTok.setKind(tok::annot_typename);
     }
 
+    AllTokens.push_back(AnnotatedToken(ThisTok));
+
     LastTok = ThisTok;
     LastTokenStart = ThisTokenStart;
   }
+
+  auto x = fuzzyparse(&*AllTokens.begin(), &*AllTokens.end());
+  printAST(*x, SourceMgr);
 }
 
 } // end namespace highlight
