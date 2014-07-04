@@ -10,7 +10,7 @@ add_clang_executable(clang-highlight
   )
 
 target_link_libraries(clang-highlight
-  clangTooling
+  # clangTooling
   clangAST
   )
 

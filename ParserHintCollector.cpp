@@ -14,6 +14,7 @@ using namespace llvm;
 namespace clang {
 namespace highlight {
 
+#if 0
 namespace {
 class ParserHintVisitor : public RecursiveASTVisitor<ParserHintVisitor> {
 public:
@@ -73,11 +74,12 @@ public:
   virtual clang::FrontendAction *create() { return new ParserHintAction(PH); }
 };
 } // end anonymous namespace
+#endif
 
 ParserHints collectParserHints(StringRef SourceFile) {
   ParserHints Hints;
   Hints.FileName = SourceFile;
-
+#if 0
   std::string ErrMsg;
   if (CompilationDatabase *CDB =
           clang::tooling::CompilationDatabase::autoDetectFromSource(SourceFile,
@@ -88,6 +90,7 @@ ParserHints collectParserHints(StringRef SourceFile) {
   } else {
     llvm::errs() << "collectParserHints: " << ErrMsg << '\n';
   }
+#endif
   return Hints;
 }
 
