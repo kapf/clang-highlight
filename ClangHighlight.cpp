@@ -52,17 +52,18 @@ static void PrintVersion() {
   OS << clang::getClangToolFullVersion("clang-highlight") << '\n';
 }
 
-static bool parser_highlight(StringRef File, OutputFormat Format,
+static bool parserHighlight(StringRef File, OutputFormat Format,
                              bool UseParser) {
   ParserHints Hints = UseParser ? collectParserHints(File) : ParserHints(File);
 
-  std::unique_ptr<llvm::MemoryBuffer> Source;
-  if (auto err = llvm::MemoryBuffer::getFileOrSTDIN(File, Source)) {
+  //std::unique_ptr<llvm::MemoryBuffer> Source
+  auto Source = llvm::MemoryBuffer::getFileOrSTDIN(File);
+  if (std::error_code err = Source.getError()) {
     llvm::errs() << err.message() << '\n';
-    return false;
+    return true;
   }
 
-  highlight(std::move(Source), makeOutputWriter(Format), Hints);
+  highlight(std::move(*Source), makeOutputWriter(Format), Hints);
   return false;
 }
 
@@ -86,7 +87,7 @@ int main(int argc, const char **argv) {
 
   bool Error = false;
 
-  Error |= parser_highlight(FileName, OutputFormatFlag, UseParser);
+  Error |= parserHighlight(FileName, OutputFormatFlag, UseParser);
 
   return Error ? 1 : 0;
 }
