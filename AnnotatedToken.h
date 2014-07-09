@@ -46,10 +46,29 @@ public:
   }
   AnnotatedTokenRef(nullptr_t = nullptr) : ATok(nullptr) {}
 
-  AnnotatedToken &operator*() { return *ATok; }
-  AnnotatedToken const &operator*() const { return *ATok; }
-  AnnotatedToken *operator->() { return ATok; }
-  AnnotatedToken const *operator->() const { return ATok; }
+  AnnotatedToken &operator*() {
+    assert(*this);
+    return *ATok;
+  }
+  AnnotatedToken const &operator*() const {
+    assert(*this);
+    return *ATok;
+  }
+  AnnotatedToken *operator->() {
+    assert(*this);
+    return ATok;
+  }
+  AnnotatedToken const *operator->() const {
+    assert(*this);
+    return ATok;
+  }
+
+  AnnotatedTokenRef &operator=(AnnotatedToken *ATok) {
+    this->ATok = ATok;
+    return *this;
+  }
+
+  operator bool() const { return ATok; }
 };
 
 } // end namespace fuzzy

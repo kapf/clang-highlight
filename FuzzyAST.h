@@ -32,12 +32,11 @@ public:
   enum ASTElementClass {
     NoASTElementClass = 0,
     TypeClass,
+    TypeDecorationClass,
     VarInitializationClass,
     VarDeclClass,
-
     LineStmtClass,
     CompoundStmtClass,
-
     DeclStmtClass,
     DeclRefExprClass,
     LiteralConstantClass,
@@ -93,10 +92,9 @@ private:
 
 /// By a semicolon terminated statement
 class LineStmt : public Stmt {
-  LineStmt(AnnotatedToken *Semi)
-    : Stmt(LineStmtClass),
-      Semi(Semi) {}
-  AnnotatedToken *Semi;
+  LineStmt(AnnotatedToken *Semi) : Stmt(LineStmtClass), Semi(Semi, this) {}
+  AnnotatedTokenRef Semi;
+
 protected:
   LineStmt(ASTElementClass SC) : Stmt(SC), Semi(nullptr) {}
 };
@@ -113,7 +111,7 @@ public:
     RBR,
     END_EXPR
   };
-  AnnotatedToken *Brackets[END_EXPR];
+  AnnotatedTokenRef Brackets[END_EXPR];
 
   CompoundStmt(AnnotatedToken *lbr, AnnotatedToken *rbr)
       : Stmt(CompoundStmtClass) {
@@ -123,9 +121,7 @@ public:
 
   void setBracket(int BracIdx, AnnotatedToken *Tok) {
     assert(0 <= BracIdx && BracIdx < END_EXPR);
-    if (Tok)
-      Tok->setASTReference(this);
-    Brackets[BracIdx] = Tok;
+    Brackets[BracIdx] = AnnotatedTokenRef(Tok, this);
   }
 
   void addStmt(std::unique_ptr<Stmt> Statement) {
@@ -141,20 +137,21 @@ public:
 
 // A Type with it's decorations.
 struct Type : ASTElement {
-  Type(AnnotatedToken *NameTok) : ASTElement(TypeClass), NameTok(NameTok) {}
+  Type(AnnotatedToken *NameTok)
+      : ASTElement(TypeClass), NameTok(NameTok, this) {}
 
-  struct Decoration {
+  struct Decoration : ASTElement {
     enum DecorationClass {
       Pointer,
       Reference,
     };
     Decoration(DecorationClass Class, AnnotatedToken *Tok)
-        : Class(Class), Tok(Tok) {}
+        : ASTElement(TypeDecorationClass), Class(Class), Tok(Tok, this) {}
     DecorationClass Class;
-    AnnotatedToken *Tok;
+    AnnotatedTokenRef Tok;
   };
   llvm::SmallVector<Decoration, 1> Decorations;
-  AnnotatedToken *NameTok;
+  AnnotatedTokenRef NameTok;
 };
 
 class Expr;
@@ -180,17 +177,17 @@ struct VarInitialization : ASTElement {
     }
   }
   InitializationType InitType;
-  AnnotatedToken *AssignmentOps[2]; // '=' or '('+')' or '{'+'}'
+  AnnotatedTokenRef AssignmentOps[2]; // '=' or '('+')' or '{'+'}'
   std::unique_ptr<Expr> Value;
 };
 
 // Declaration of a variable with optional initialization
 struct VarDecl : ASTElement {
   VarDecl(Type VariableType, AnnotatedToken *NameTok)
-      : ASTElement(VarDeclClass), VariableType(VariableType), NameTok(NameTok),
-        Value() {}
+      : ASTElement(VarDeclClass), VariableType(VariableType),
+        NameTok(NameTok, this), Value() {}
   Type VariableType;
-  AnnotatedToken *NameTok;
+  AnnotatedTokenRef NameTok;
   llvm::Optional<VarInitialization> Value;
 };
 
@@ -217,8 +214,8 @@ inline Expr::~Expr() {}
 // Presumably a variable name inside an expression.
 class DeclRefExpr : public Expr {
 public:
-  AnnotatedToken *Tok;
-  DeclRefExpr(AnnotatedToken *Tok) : Expr(DeclRefExprClass), Tok(Tok) {
+  AnnotatedTokenRef Tok;
+  DeclRefExpr(AnnotatedToken *Tok) : Expr(DeclRefExprClass), Tok(Tok, this) {
     Tok->setASTReference(this);
   }
 
@@ -230,8 +227,9 @@ public:
 /// Int, char or string literals
 class LiteralConstant : public Expr {
 public:
-  AnnotatedToken *Tok;
-  LiteralConstant(AnnotatedToken *Tok) : Expr(LiteralConstantClass), Tok(Tok) {
+  AnnotatedTokenRef Tok;
+  LiteralConstant(AnnotatedToken *Tok)
+      : Expr(LiteralConstantClass), Tok(Tok, this) {
     Tok->setASTReference(this);
   }
 
@@ -243,11 +241,11 @@ public:
 /// Any unary operator, even the overloaded ones.
 class UnaryOperator : public Expr {
 public:
-  AnnotatedToken *OperatorTok;
+  AnnotatedTokenRef OperatorTok;
   std::unique_ptr<Expr> Value;
 
   UnaryOperator(AnnotatedToken *OperatorTok, std::unique_ptr<Expr> Value)
-      : Expr(UnaryOperatorClass), OperatorTok(OperatorTok),
+      : Expr(UnaryOperatorClass), OperatorTok(OperatorTok, this),
         Value(std::move(Value)) {
     OperatorTok->setASTReference(this);
   }
@@ -267,15 +265,13 @@ class BinaryOperator : public Expr {
   std::unique_ptr<Expr> SubExprs[END_EXPR];
 
 public:
-  AnnotatedToken *OperatorTok;
+  AnnotatedTokenRef OperatorTok;
 
   BinaryOperator(std::unique_ptr<Expr> lhs, std::unique_ptr<Expr> rhs,
                  AnnotatedToken *OperatorTok)
-      : Expr(BinaryOperatorClass) {
+      : Expr(BinaryOperatorClass), OperatorTok(OperatorTok, this) {
     SubExprs[LHS] = std::move(lhs);
     SubExprs[RHS] = std::move(rhs);
-    this->OperatorTok = OperatorTok;
-    this->OperatorTok->setASTReference(this);
   }
 
   static bool classof(const ASTElement *T) {
