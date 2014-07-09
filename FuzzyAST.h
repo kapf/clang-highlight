@@ -10,9 +10,9 @@
 #ifndef LLVM_CLANG_TOOLS_CLANG_HIGHLIGHT_FUZZY_AST_H
 #define LLVM_CLANG_TOOLS_CLANG_HIGHLIGHT_FUZZY_AST_H
 
-#include "clang/Lex/Lexer.h"
 #include "llvm/ADT/StringRef.h"
 #include "clang/Basic/SourceManager.h"
+#include "AnnotatedToken.h"
 #include <memory>
 
 using namespace clang;
@@ -20,52 +20,201 @@ using namespace clang;
 namespace clang {
 namespace fuzzy {
 
-class Stmt;
-
-struct AnnotatedToken {
-  AnnotatedToken(Token Tok) : Tok(Tok), ASTReference(nullptr) {}
-
-  Token Tok;
-  Stmt *ASTReference;
-
-  StringRef getText(const SourceManager &SourceMgr) const {
-    return StringRef(SourceMgr.getCharacterData(Tok.getLocation()),
-                     Tok.getLength());
-  }
-
-  void setASTReference(Stmt *ASTReference) {
-    this->ASTReference = ASTReference;
-  }
-};
-
-class Stmt {
+/// ASTElement: Anything inside the AST that may be referenced by an
+/// AnnotatedToken must be an ASTElement.  This class is not strictly needed
+/// from an AST point of view.
+class ASTElement {
+protected:
+  ASTElement() = default;
+  ~ASTElement() = default; // Not accessible
 public:
-  virtual ~Stmt() = 0; // Not optimized
-
   // TODO: TableGen
-  enum StmtClass {
-    NoStmtClass = 0,
+  enum ASTElementClass {
+    NoASTElementClass = 0,
+    TypeClass,
+    VarInitializationClass,
+    VarDeclClass,
+
+    LineStmtClass,
+    CompoundStmtClass,
+
+    DeclStmtClass,
     DeclRefExprClass,
     LiteralConstantClass,
     UnaryOperatorClass,
     BinaryOperatorClass,
   };
 
-  Stmt(StmtClass SC) : sClass(SC) {}
+  ASTElement(ASTElementClass SC) : sClass(SC) {}
 
-  StmtClass getStmtClass() const { return sClass; }
+  ASTElementClass getASTClass() const { return sClass; }
 
 private:
-  StmtClass sClass;
+  ASTElementClass sClass;
+};
+
+/// In contrast to the clang AST, a Stmt is a real statement, that is either a
+/// CompoundStmt or a LineStmt.
+class Stmt : public ASTElement {
+public:
+  virtual ~Stmt() = 0; // Not optimized
+
+  Stmt(ASTElementClass SC) : ASTElement(SC) {}
 };
 inline Stmt::~Stmt() {}
 
-struct Expr : Stmt {
-  Expr(StmtClass SC) : Stmt(SC) {}
-  ~Expr() = 0;
+template <typename Iter, typename Value> class IndirectRange {
+public:
+  IndirectRange(Iter First, Iter Last) : First(First), Last(Last) {}
+  struct IndirectIter {
+    IndirectIter(Iter Pos) : Pos(Pos) {}
+    Iter Pos;
+    friend bool operator==(IndirectIter LHS, IndirectIter RHS) {
+      return LHS.Pos == RHS.Pos;
+    }
+    IndirectIter operator++() {
+      ++Pos;
+      return *this;
+    }
+    IndirectIter operator++(int) {
+      auto Self = *this;
+      ++*this;
+      return Self;
+    }
+    Value &operator*() { return **Pos; }
+  };
+
+  IndirectIter begin() { return First; }
+  IndirectIter end() { return Last; }
+
+private:
+  IndirectIter First, Last;
+};
+
+/// By a semicolon terminated statement
+class LineStmt : public Stmt {
+  LineStmt(AnnotatedToken *Semi)
+    : Stmt(LineStmtClass),
+      Semi(Semi) {}
+  AnnotatedToken *Semi;
+protected:
+  LineStmt(ASTElementClass SC) : Stmt(SC), Semi(nullptr) {}
+};
+
+/// A {}-Block with Statements inside.
+class CompoundStmt : public Stmt {
+public:
+  llvm::SmallVector<std::unique_ptr<Stmt>, 8> Body;
+  using child_range = IndirectRange<
+      llvm::SmallVector<std::unique_ptr<Stmt>, 8>::iterator, Stmt>;
+
+  enum {
+    LBR,
+    RBR,
+    END_EXPR
+  };
+  AnnotatedToken *Brackets[END_EXPR];
+
+  CompoundStmt(AnnotatedToken *lbr, AnnotatedToken *rbr)
+      : Stmt(CompoundStmtClass) {
+    setBracket(LBR, lbr);
+    setBracket(RBR, rbr);
+  }
+
+  void setBracket(int BracIdx, AnnotatedToken *Tok) {
+    assert(0 <= BracIdx && BracIdx < END_EXPR);
+    if (Tok)
+      Tok->setASTReference(this);
+    Brackets[BracIdx] = Tok;
+  }
+
+  void addStmt(std::unique_ptr<Stmt> Statement) {
+    Body.push_back(std::move(Statement));
+  }
+
+  child_range children() { return child_range(Body.begin(), Body.end()); }
+
+  static bool classof(const ASTElement *T) {
+    return T->getASTClass() == CompoundStmtClass;
+  }
+};
+
+// A Type with it's decorations.
+struct Type : ASTElement {
+  Type(AnnotatedToken *NameTok) : ASTElement(TypeClass), NameTok(NameTok) {}
+
+  struct Decoration {
+    enum DecorationClass {
+      Pointer,
+      Reference,
+    };
+    Decoration(DecorationClass Class, AnnotatedToken *Tok)
+        : Class(Class), Tok(Tok) {}
+    DecorationClass Class;
+    AnnotatedToken *Tok;
+  };
+  llvm::SmallVector<Decoration, 1> Decorations;
+  AnnotatedToken *NameTok;
+};
+
+class Expr;
+
+// Initialization of a variable
+struct VarInitialization : ASTElement {
+  enum InitializationType {
+    ASSIGNMENT,
+    CONSTRUCTOR,
+    BRACE,
+  };
+  VarInitialization(InitializationType InitType,
+                    AnnotatedToken AssignmentOps[2],
+                    std::unique_ptr<Expr> Value)
+      : ASTElement(VarInitializationClass), InitType(InitType),
+        Value(std::move(Value)) {
+    if (InitType == ASSIGNMENT) {
+      this->AssignmentOps[0] = &AssignmentOps[0];
+      this->AssignmentOps[1] = nullptr;
+    } else {
+      this->AssignmentOps[0] = &AssignmentOps[0];
+      this->AssignmentOps[1] = &AssignmentOps[1];
+    }
+  }
+  InitializationType InitType;
+  AnnotatedToken *AssignmentOps[2]; // '=' or '('+')' or '{'+'}'
+  std::unique_ptr<Expr> Value;
+};
+
+// Declaration of a variable with optional initialization
+struct VarDecl : ASTElement {
+  VarDecl(Type VariableType, AnnotatedToken *NameTok)
+      : ASTElement(VarDeclClass), VariableType(VariableType), NameTok(NameTok),
+        Value() {}
+  Type VariableType;
+  AnnotatedToken *NameTok;
+  llvm::Optional<VarInitialization> Value;
+};
+
+// Only for variable declarations (for now)
+struct DeclStmt : LineStmt {
+  llvm::SmallVector<VarDecl, 1> Decls;
+
+  DeclStmt() : LineStmt(DeclStmtClass) {}
+
+  static bool classof(const ASTElement *T) {
+    return T->getASTClass() == DeclStmtClass;
+  }
+};
+
+/// An expression in it's classical sense.  If an expression is used as a
+/// statement, it has to be embedded into a ExprStmt (yet to be implemented).
+/// Rationale is that there is otherwise no way to store the semicolon.
+struct Expr : ASTElement {
+  Expr(ASTElementClass SC) : ASTElement(SC) {}
+  virtual ~Expr() = 0;
 };
 inline Expr::~Expr() {}
 
+// Presumably a variable name inside an expression.
 class DeclRefExpr : public Expr {
 public:
   AnnotatedToken *Tok;
@@ -73,11 +222,12 @@ public:
     Tok->setASTReference(this);
   }
 
-  static bool classof(const Stmt *T) {
-    return T->getStmtClass() == DeclRefExprClass;
+  static bool classof(const ASTElement *T) {
+    return T->getASTClass() == DeclRefExprClass;
   }
 };
 
+/// Int, char or string literals
 class LiteralConstant : public Expr {
 public:
   AnnotatedToken *Tok;
@@ -85,11 +235,12 @@ public:
     Tok->setASTReference(this);
   }
 
-  static bool classof(const Stmt *T) {
-    return T->getStmtClass() == LiteralConstantClass;
+  static bool classof(const ASTElement *T) {
+    return T->getASTClass() == LiteralConstantClass;
   }
 };
 
+/// Any unary operator, even the overloaded ones.
 class UnaryOperator : public Expr {
 public:
   AnnotatedToken *OperatorTok;
@@ -101,14 +252,12 @@ public:
     OperatorTok->setASTReference(this);
   }
 
-  static bool classof(const Stmt *T) {
-    return T->getStmtClass() == UnaryOperatorClass;
+  static bool classof(const ASTElement *T) {
+    return T->getASTClass() == UnaryOperatorClass;
   }
 };
 
-/// Used to store any kind of binary operators, even the overloaded ones
-/// (CXXOperatorCallExpr).  As Fuzzy AST doesn't want to store type information
-/// for now, this is not needed anyway.
+/// Used to store any kind of binary operators, even the overloaded ones.
 class BinaryOperator : public Expr {
   enum {
     LHS,
@@ -129,8 +278,8 @@ public:
     this->OperatorTok->setASTReference(this);
   }
 
-  static bool classof(const Stmt *T) {
-    return T->getStmtClass() == BinaryOperatorClass;
+  static bool classof(const ASTElement *T) {
+    return T->getASTClass() == BinaryOperatorClass;
   }
 
   Expr *getLHS() { return cast<Expr>(SubExprs[LHS].get()); }

@@ -7,6 +7,7 @@ add_clang_executable(clang-highlight
   OutputWriter.cpp
   ParserHintCollector.cpp
   FuzzyParser.cpp
+  FuzzyASTPrinter.cpp
   )
 
 target_link_libraries(clang-highlight

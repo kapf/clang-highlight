@@ -18,18 +18,47 @@ namespace fuzzy {
 
 namespace {
 struct TokenFilter {
-  AnnotatedToken *first, *last;
+  AnnotatedToken *First, *Last;
 
   AnnotatedToken *next() {
-    auto ret = first++;
-    while (first != last && first->Tok.getKind() == tok::unknown)
-      ++first;
-    if (first == last)
-      first = last = 0;
-    return ret;
+    auto Ret = First++;
+    while (First != Last && First->Tok.getKind() == tok::unknown)
+      ++First;
+    if (First == Last)
+      First = Last = 0;
+    return Ret;
   }
 
-  AnnotatedToken *peek() { return first; }
+  class TokenFilterState {
+    friend class TokenFilter;
+    TokenFilterState(AnnotatedToken *First, AnnotatedToken *Last)
+        : First(First), Last(Last) {}
+    AnnotatedToken *First, *Last;
+  };
+
+  TokenFilterState mark() const { return TokenFilterState(First, Last); }
+  void rewind(TokenFilterState State) {
+    First = State.First;
+    Last = State.Last;
+  }
+
+  class TokenFilterGuard {
+    friend class TokenFilter;
+    TokenFilterGuard(TokenFilter *TF, TokenFilterState State)
+        : TF(TF), State(State) {}
+
+  public:
+    ~TokenFilterGuard() {
+      if (TF)
+        TF->rewind(State);
+    }
+    void dismiss() { TF = nullptr; }
+    TokenFilter *TF;
+    TokenFilterState State;
+  };
+  TokenFilterGuard guard() { return TokenFilterGuard(this, mark()); }
+
+  AnnotatedToken *peek() { return First; }
 };
 } // end anonymous namespace
 
@@ -37,12 +66,12 @@ static int PrecedenceUnaryOperator = prec::PointerToMember + 1;
 static int PrecedenceArrowAndPeriod = prec::PointerToMember + 2;
 
 static std::unique_ptr<Expr> parseExpression(TokenFilter &TF,
-                                             int Precedence = 0);
+                                             int Precedence = 1);
 
 static std::unique_ptr<Expr> parseUnaryOperator(TokenFilter &TF) {
   assert(TF.peek() && "can't parse empty expression");
 
-  if (TF.peek()->Tok.getKind() == tok::star) {  
+  if (TF.peek()->Tok.getKind() == tok::star) {
     AnnotatedToken *Op = TF.next();
     return llvm::make_unique<UnaryOperator>(Op, parseUnaryOperator(TF));
   }
@@ -50,8 +79,7 @@ static std::unique_ptr<Expr> parseUnaryOperator(TokenFilter &TF) {
   return parseExpression(TF, PrecedenceArrowAndPeriod);
 }
 
-static std::unique_ptr<Expr> parseExpression(TokenFilter &TF,
-                                             int Precedence) {
+static std::unique_ptr<Expr> parseExpression(TokenFilter &TF, int Precedence) {
   assert(TF.peek() && "can't parse empty expression");
 
   if (Precedence == PrecedenceUnaryOperator)
@@ -70,6 +98,9 @@ static std::unique_ptr<Expr> parseExpression(TokenFilter &TF,
   while (TF.peek()) {
     int CurrentPrecedence =
         getBinOpPrecedence(TF.peek()->Tok.getKind(), true, true);
+    if (CurrentPrecedence == 0)
+      return LeftExpr;
+
     assert(CurrentPrecedence <= Precedence);
     if (CurrentPrecedence < Precedence)
       break;
@@ -84,37 +115,58 @@ static std::unique_ptr<Expr> parseExpression(TokenFilter &TF,
   return LeftExpr;
 }
 
-std::unique_ptr<Stmt> fuzzyparse(AnnotatedToken *first, AnnotatedToken *last) {
-  TokenFilter TF{first, last};
-  return parseExpression(TF);
-}
+std::unique_ptr<Stmt> tryParseDeclStmt(TokenFilter &TF) {
+  auto Guard = TF.guard();
 
-static void printASTImpl(int Indent, const Stmt &stmt,
-                         const SourceManager &SourceMgr) {
-  if (auto *BinOp = llvm::dyn_cast<BinaryOperator>(&stmt)) {
-    printASTImpl(Indent + 4, *BinOp->getLHS(), SourceMgr);
-    llvm::dbgs() << std::string(Indent, ' ')
-                 << tok::getTokenName(BinOp->OperatorTok->Tok.getKind())
-                 << '\n';
-    printASTImpl(Indent + 4, *BinOp->getRHS(), SourceMgr);
-  } else if (auto *Decl = llvm::dyn_cast<DeclRefExpr>(&stmt)) {
-    llvm::dbgs() << std::string(Indent, ' ') << Decl->Tok->getText(SourceMgr)
-                 << '\n';
-  } else if (auto *Lit = llvm::dyn_cast<LiteralConstant>(&stmt)) {
-    llvm::dbgs() << std::string(Indent, ' ') << Lit->Tok->getText(SourceMgr)
-                 << '\n';
-  } else if (auto *Unar = llvm::dyn_cast<UnaryOperator>(&stmt)) {
-    llvm::dbgs() << std::string(Indent, ' ')
-                 << Unar->OperatorTok->getText(SourceMgr)
-                 << ": ";
-    printASTImpl(0, *Unar->Value, SourceMgr);
-  } else {
-    llvm_unreachable("TODO: unhandled fuzzy ast node");
+  // Form: identifier [any number of '*'] identifier '='
+  if (TF.peek() && TF.peek()->Tok.getKind() != tok::identifier)
+    return nullptr;
+  AnnotatedToken *TypeName = TF.next();
+  auto Declaration = llvm::make_unique<DeclStmt>();
+
+  while (TF.peek()) {
+    Type VarType(TypeName);
+
+    while (TF.peek() && TF.peek()->Tok.getKind() == tok::star)
+      VarType.Decorations.push_back(Type::Decoration(
+          Type::Decoration::Pointer, TF.next())); // Skip pointer derefs.
+
+    if (TF.peek() && TF.peek()->Tok.getKind() != tok::identifier)
+      return nullptr;
+
+    VarDecl D(VarType, TF.next());
+
+    // TODO: var(init) and var{init} not yet implemented
+    if (TF.peek() && TF.peek()->Tok.getKind() == tok::equal) {
+      auto *EqualTok = TF.next();
+      if (auto Value = parseExpression(TF, prec::Comma + 1))
+        D.Value = VarInitialization(VarInitialization::ASSIGNMENT, EqualTok,
+                                    std::move(Value));
+      else
+        return nullptr;
+    } else {
+      return nullptr;
+    }
+
+    Declaration->Decls.push_back(std::move(D));
+
+    if (TF.peek() && TF.next()->Tok.getKind() == tok::semi)
+      return std::move(Declaration);
   }
+
+  return nullptr;
 }
 
-void printAST(const Stmt &Root, const SourceManager &SourceMgr) {
-  return printASTImpl(0, Root, SourceMgr);
+static std::unique_ptr<Stmt> parseCompoundStmt(TokenFilter &TF) {
+  // TODO: Currently only testing driver
+  if (auto Decl = tryParseDeclStmt(TF))
+    return Decl;
+  llvm_unreachable("could not parse decl stmt");
+}
+
+std::unique_ptr<Stmt> fuzzyparse(AnnotatedToken *first, AnnotatedToken *last) {
+  TokenFilter TF{ first, last };
+  return parseCompoundStmt(TF);
 }
 
 } // end namespace fuzzy
