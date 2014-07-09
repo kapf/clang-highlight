@@ -25,12 +25,12 @@ namespace fuzzy {
 /// from an AST point of view.
 class ASTElement {
 protected:
-  ASTElement() = default;
   ~ASTElement() = default; // Not accessible
 public:
   // TODO: TableGen
   enum ASTElementClass {
     NoASTElementClass = 0,
+    UnparsableBlockClass,
     TypeClass,
     TypeDecorationClass,
     VarInitializationClass,
@@ -61,6 +61,18 @@ public:
   Stmt(ASTElementClass SC) : ASTElement(SC) {}
 };
 inline Stmt::~Stmt() {}
+
+struct UnparsableBlock : Stmt {
+  UnparsableBlock() : Stmt(UnparsableBlockClass) {}
+  void push_back(AnnotatedToken *Tok) {
+    Body.push_back(AnnotatedTokenRef(Tok, this));
+  }
+  llvm::SmallVector<AnnotatedTokenRef, 8> Body;
+
+  static bool classof(const ASTElement *T) {
+    return T->getASTClass() == UnparsableBlockClass;
+  }
+};
 
 template <typename Iter, typename Value> class IndirectRange {
 public:
@@ -135,10 +147,9 @@ public:
   }
 };
 
-// A Type with it's decorations.
+/// A Type with it's decorations.
 struct Type : ASTElement {
-  Type(AnnotatedToken *NameTok)
-      : ASTElement(TypeClass), NameTok(NameTok, this) {}
+  Type() : ASTElement(TypeClass) {}
 
   struct Decoration : ASTElement {
     enum DecorationClass {
@@ -149,49 +160,72 @@ struct Type : ASTElement {
         : ASTElement(TypeDecorationClass), Class(Class), Tok(Tok, this) {}
     DecorationClass Class;
     AnnotatedTokenRef Tok;
+
+    void fix() { Tok = AnnotatedTokenRef(Tok, this); }
+
+    static bool classof(const ASTElement *T) {
+      return T->getASTClass() == TypeDecorationClass;
+    }
   };
   llvm::SmallVector<Decoration, 1> Decorations;
   AnnotatedTokenRef NameTok;
+
+  void setName(AnnotatedToken *NameTok) {
+    this->NameTok = AnnotatedTokenRef(NameTok, this);
+  }
+
+  static bool classof(const ASTElement *T) {
+    return T->getASTClass() == TypeClass;
+  }
 };
 
 class Expr;
 
-// Initialization of a variable
+/// Initialization of a variable
 struct VarInitialization : ASTElement {
   enum InitializationType {
+    NONE = 0,
     ASSIGNMENT,
     CONSTRUCTOR,
     BRACE,
   };
-  VarInitialization(InitializationType InitType,
-                    AnnotatedToken AssignmentOps[2],
-                    std::unique_ptr<Expr> Value)
-      : ASTElement(VarInitializationClass), InitType(InitType),
-        Value(std::move(Value)) {
+  VarInitialization() : ASTElement(VarInitializationClass), InitType(NONE) {}
+
+  void setAssignmentOps(InitializationType InitType,
+                        AnnotatedToken AssignmentOps[2]) {
+    this->InitType = ASSIGNMENT;
     if (InitType == ASSIGNMENT) {
-      this->AssignmentOps[0] = &AssignmentOps[0];
-      this->AssignmentOps[1] = nullptr;
+      this->AssignmentOps[0] = AnnotatedTokenRef(&AssignmentOps[0], this);
+      this->AssignmentOps[1] = AnnotatedTokenRef(nullptr);
     } else {
-      this->AssignmentOps[0] = &AssignmentOps[0];
-      this->AssignmentOps[1] = &AssignmentOps[1];
+      this->AssignmentOps[0] = AnnotatedTokenRef(&AssignmentOps[0], this);
+      this->AssignmentOps[1] = AnnotatedTokenRef(&AssignmentOps[1], this);
     }
   }
+
   InitializationType InitType;
   AnnotatedTokenRef AssignmentOps[2]; // '=' or '('+')' or '{'+'}'
   std::unique_ptr<Expr> Value;
+
+  static bool classof(const ASTElement *T) {
+    return T->getASTClass() == VarInitializationClass;
+  }
 };
 
-// Declaration of a variable with optional initialization
+/// Declaration of a variable with optional initialization
 struct VarDecl : ASTElement {
-  VarDecl(Type VariableType, AnnotatedToken *NameTok)
-      : ASTElement(VarDeclClass), VariableType(VariableType),
-        NameTok(NameTok, this), Value() {}
+  VarDecl() : ASTElement(VarDeclClass) {}
+
+  void setName(AnnotatedToken *Tok) {
+    this->NameTok = AnnotatedTokenRef(Tok, this);
+  }
+
   Type VariableType;
   AnnotatedTokenRef NameTok;
   llvm::Optional<VarInitialization> Value;
 };
 
-// Only for variable declarations (for now)
+/// Only for variable declarations (for now)
 struct DeclStmt : LineStmt {
   llvm::SmallVector<VarDecl, 1> Decls;
 
@@ -284,7 +318,8 @@ public:
   const Expr *getRHS() const { return cast<Expr>(SubExprs[RHS].get()); }
 };
 
-std::unique_ptr<Stmt> fuzzyparse(AnnotatedToken *first, AnnotatedToken *last);
+llvm::SmallVector<std::unique_ptr<Stmt>, 8> fuzzyparse(AnnotatedToken *first,
+                                                       AnnotatedToken *last);
 
 void printAST(const Stmt &Root, const SourceManager &SourceMgr);
 

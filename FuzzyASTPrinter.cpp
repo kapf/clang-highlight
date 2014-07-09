@@ -53,9 +53,11 @@ void ASTPrinter::print(Indented Indent, const VarDecl &DCL) {
   OS << Indent << "VarDecl '" << DCL.NameTok->getText(SourceMgr) << "'\n";
   print(Indent.next(), DCL.VariableType);
   if (DCL.Value) {
-    const char *InitName[] = { "=", "()", "{}" };
+    const char *InitName[] = { "?", "=", "()", "{}" };
+    assert(1 <= DCL.Value->InitType && DCL.Value->InitType < 4);
     OS << Indent.next() << "Assignment Type '" << InitName[DCL.Value->InitType]
        << "'\n";
+    assert(DCL.Value->Value);
     print(Indent.next(), *DCL.Value->Value);
   }
 }
@@ -83,6 +85,9 @@ void ASTPrinter::print(Indented Indent, const Stmt &stmt) {
     OS << Indent << "DeclStmt\n";
     for (const VarDecl &VD : DS->Decls)
       print(Indent.next(), VD);
+  } else if (auto *UB = llvm::dyn_cast<UnparsableBlock>(&stmt)) {
+    (void)UB;
+    OS << Indent << "<Unparsable Block>\n";
   } else {
     llvm_unreachable("TODO: unhandled fuzzy ast node");
   }

@@ -36,7 +36,7 @@ enum class TokenClass {
 
 class OutputWriter {
 public:
-  virtual void writeToken(llvm::StringRef Text, TokenClass Class) =0;
+  virtual void writeToken(llvm::StringRef Text, TokenClass Class) = 0;
   virtual ~OutputWriter();
 };
 

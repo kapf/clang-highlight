@@ -97,16 +97,31 @@ void highlight(std::unique_ptr<llvm::MemoryBuffer> Source,
 
   IdentifierTable IdentTable(getFormattingLangOpts());
 
-  const char *LastTokenStart = nullptr, *ThisTokenStart = nullptr;
-  Token LastTok, ThisTok;
-
-  bool PPMode;
-  TokenClass Class = TokenClass::Other;
-
   std::vector<fuzzy::AnnotatedToken> AllTokens;
 
   for (;;) {
-    Lex.LexFromRawLexer(ThisTok);
+    Token TmpTok;
+    Lex.LexFromRawLexer(TmpTok);
+    AllTokens.push_back(fuzzy::AnnotatedToken(TmpTok));
+    Token &ThisTok = AllTokens.back().Tok;
+
+    if (ThisTok.is(tok::eof))
+      break;
+  }
+
+  auto x = fuzzy::fuzzyparse(&*AllTokens.begin(), &*AllTokens.end());
+
+  // print the AST to cerr for debugging purposes
+  for (auto &stmt : x)
+    fuzzy::printAST(*stmt, SourceMgr);
+
+  bool PPMode = false;
+  TokenClass Class = TokenClass::Other;
+  const char *LastTokenStart = nullptr, *ThisTokenStart = nullptr;
+  Token LastTok;
+  for (auto &ATok : AllTokens) {
+    Token &ThisTok = ATok.Tok;
+
     ThisTokenStart = SourceMgr.getCharacterData(ThisTok.getLocation());
     if (LastTokenStart) {
       if (Class == TokenClass::Other)
@@ -114,9 +129,6 @@ void highlight(std::unique_ptr<llvm::MemoryBuffer> Source,
       OW->writeToken(StringRef(LastTokenStart, ThisTokenStart - LastTokenStart),
                      Class);
     }
-
-    if (ThisTok.is(tok::eof))
-      break;
 
     Class = TokenClass::Other;
 
@@ -138,18 +150,14 @@ void highlight(std::unique_ptr<llvm::MemoryBuffer> Source,
 
     unsigned ThisLoc = SourceMgr.getFileOffset(ThisTok.getLocation());
     if (std::binary_search(PH.TypeOffsets.begin(), PH.TypeOffsets.end(),
-                           ThisLoc)) {
+                           ThisLoc) ||
+        (ATok.ASTReference && llvm::isa<fuzzy::Type>(ATok.ASTReference))) {
       ThisTok.setKind(tok::annot_typename);
     }
-
-    AllTokens.push_back(fuzzy::AnnotatedToken(ThisTok));
 
     LastTok = ThisTok;
     LastTokenStart = ThisTokenStart;
   }
-
-  auto x = fuzzy::fuzzyparse(&*AllTokens.begin(), &*AllTokens.end());
-  fuzzy::printAST(*x, SourceMgr);
 }
 
 } // end namespace highlight

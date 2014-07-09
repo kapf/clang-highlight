@@ -26,7 +26,7 @@ OutputWriter::~OutputWriter() {}
 namespace {
 struct StdoutFormatInfo {
   StdoutFormatInfo(raw_ostream::Colors Color, bool Bold = false)
-    : Color(Color), Bold(Bold) {}
+      : Color(Color), Bold(Bold) {}
   raw_ostream::Colors Color;
   bool Bold;
 };
@@ -96,7 +96,7 @@ class HtmlWriter : public OutputWriter {
 
 public:
   HtmlWriter(raw_ostream &OS) : OS(OS) {
-    OS << R"(<p style="white-space:pre"><tt>)";
+    OS << R"(<p style=" white - space : pre "><tt>)";
   }
   ~HtmlWriter() { OS << "</tt></p>"; }
 

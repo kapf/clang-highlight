@@ -23,7 +23,7 @@ namespace highlight {
 class OutputWriter;
 
 struct ParserHints {
-  ParserHints() =default;
+  ParserHints() = default;
   ParserHints(llvm::StringRef FileName) : FileName(FileName) {}
   llvm::StringRef FileName;
   std::vector<unsigned> TypeOffsets;
