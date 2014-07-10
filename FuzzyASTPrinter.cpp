@@ -72,6 +72,11 @@ void ASTPrinter::print(Indented Indent, const Expr &EXP) {
     OS << Indent << Decl->Tok->getText(SourceMgr) << '\n';
   } else if (auto *Lit = llvm::dyn_cast<LiteralConstant>(&EXP)) {
     OS << Indent << Lit->Tok->getText(SourceMgr) << '\n';
+  } else if (auto *Call = llvm::dyn_cast<CallExpr>(&EXP)) {
+    OS << Indent << "call expr '" << Call->FunctionName->Tok->getText(SourceMgr)
+       << "'\n";
+    for (auto &Arg : Call->Args)
+      print(Indent.next(), *Arg);
   } else if (auto *Unar = llvm::dyn_cast<UnaryOperator>(&EXP)) {
     OS << Indent << Unar->OperatorTok->getText(SourceMgr) << "\n";
     print(Indent.next(), *Unar->Value);
@@ -88,6 +93,9 @@ void ASTPrinter::print(Indented Indent, const Stmt &stmt) {
   } else if (auto *UB = llvm::dyn_cast<UnparsableBlock>(&stmt)) {
     (void)UB;
     OS << Indent << "<Unparsable Block>\n";
+  } else if (auto *ELS = llvm::dyn_cast<ExprLineStmt>(&stmt)) {
+    OS << Indent << "ExprLineStmt\n";
+    print(Indent.next(), *ELS->Body);
   } else {
     llvm_unreachable("TODO: unhandled fuzzy ast node");
   }

@@ -79,6 +79,25 @@ static std::unique_ptr<Expr> parseUnaryOperator(TokenFilter &TF) {
   return parseExpression(TF, PrecedenceArrowAndPeriod);
 }
 
+static std::unique_ptr<Expr>
+parseCallExpr(TokenFilter &TF, std::unique_ptr<DeclRefExpr> FunctionName) {
+  assert(TF.peek() && TF.peek()->Tok.getKind() == tok::l_paren);
+  auto Func = llvm::make_unique<CallExpr>(std::move(FunctionName));
+  Func->setLeftParen(TF.next());
+  while (TF.peek() && TF.peek()->Tok.getKind() != tok::r_paren) {
+    Func->Args.push_back(parseExpression(TF, prec::Comma + 1));
+    if (TF.peek()->Tok.getKind() == tok::comma)
+      Func->append_comma(TF.next());
+    else
+      break;
+  }
+  if (TF.peek() && TF.peek()->Tok.getKind() == tok::r_paren) {
+    Func->setRightParen(TF.next());
+    return std::move(Func);
+  }
+  return {};
+}
+
 static std::unique_ptr<Expr> parseExpression(TokenFilter &TF, int Precedence) {
   assert(TF.peek() && "can't parse empty expression");
 
@@ -86,11 +105,17 @@ static std::unique_ptr<Expr> parseExpression(TokenFilter &TF, int Precedence) {
     return parseUnaryOperator(TF);
 
   if (Precedence > PrecedenceArrowAndPeriod) {
-    if (TF.peek()->Tok.getKind() == tok::raw_identifier)
-      return llvm::make_unique<DeclRefExpr>(TF.next());
     if (isLiteral(TF.peek()->Tok.getKind()))
       return llvm::make_unique<LiteralConstant>(TF.next());
 
+    if (TF.peek()->Tok.getKind() == tok::raw_identifier) {
+      auto DR = llvm::make_unique<DeclRefExpr>(TF.next());
+      if (TF.peek() && TF.peek()->Tok.getKind() == tok::l_paren)
+        return parseCallExpr(TF, std::move(DR));
+      return std::move(DR);
+    }
+
+    return {};
     llvm_unreachable("expression not separable into operators and operands");
   }
   auto LeftExpr = parseExpression(TF, Precedence + 1);
@@ -163,10 +188,6 @@ static std::unique_ptr<Stmt> tryParseDeclStmt(TokenFilter &TF) {
   return nullptr;
 }
 
-// static std::unique_ptr<Stmt> parseCompoundStmt(TokenFilter &TF) {
-//   llvm_unreachable("TODO: please implement");
-// }
-
 static std::unique_ptr<Stmt> skipUnparsable(TokenFilter &TF) {
   assert(TF.peek());
   auto UB = llvm::make_unique<UnparsableBlock>();
@@ -180,8 +201,18 @@ static std::unique_ptr<Stmt> skipUnparsable(TokenFilter &TF) {
 }
 
 static std::unique_ptr<Stmt> parseAny(TokenFilter &TF) {
+  assert(TF.peek());
   if (auto Decl = tryParseDeclStmt(TF))
     return Decl;
+  {
+    auto Guard = TF.guard();
+    if (auto E = parseExpression(TF)) {
+      if (TF.peek() && TF.peek()->Tok.getKind() == tok::semi) {
+        Guard.dismiss();
+        return llvm::make_unique<ExprLineStmt>(std::move(E), TF.next());
+      }
+    }
+  }
   return skipUnparsable(TF);
 }
 

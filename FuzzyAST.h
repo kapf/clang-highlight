@@ -35,13 +35,14 @@ public:
     TypeDecorationClass,
     VarInitializationClass,
     VarDeclClass,
-    LineStmtClass,
+    ExprLineStmtClass,
     CompoundStmtClass,
     DeclStmtClass,
     DeclRefExprClass,
     LiteralConstantClass,
     UnaryOperatorClass,
     BinaryOperatorClass,
+    CallExprClass,
   };
 
   ASTElement(ASTElementClass SC) : sClass(SC) {}
@@ -102,13 +103,27 @@ private:
   IndirectIter First, Last;
 };
 
+class Expr;
+
 /// By a semicolon terminated statement
 class LineStmt : public Stmt {
-  LineStmt(AnnotatedToken *Semi) : Stmt(LineStmtClass), Semi(Semi, this) {}
   AnnotatedTokenRef Semi;
 
 protected:
   LineStmt(ASTElementClass SC) : Stmt(SC), Semi(nullptr) {}
+};
+
+/// An expression terminated by a semicolon
+struct ExprLineStmt : LineStmt {
+  ExprLineStmt(std::unique_ptr<Expr> Body, AnnotatedToken *Semi)
+      : LineStmt(ExprLineStmtClass), Body(std::move(Body)), Semi(Semi, this) {}
+
+  std::unique_ptr<Expr> Body;
+  AnnotatedTokenRef Semi;
+
+  static bool classof(const ASTElement *T) {
+    return T->getASTClass() == ExprLineStmtClass;
+  }
 };
 
 /// A {}-Block with Statements inside.
@@ -179,8 +194,6 @@ struct Type : ASTElement {
   }
 };
 
-class Expr;
-
 /// Initialization of a variable
 struct VarInitialization : ASTElement {
   enum InitializationType {
@@ -245,7 +258,7 @@ struct Expr : ASTElement {
 };
 inline Expr::~Expr() {}
 
-// Presumably a variable name inside an expression.
+// A variable name or function name inside an expression.
 class DeclRefExpr : public Expr {
 public:
   AnnotatedTokenRef Tok;
@@ -316,6 +329,37 @@ public:
   const Expr *getLHS() const { return cast<Expr>(SubExprs[LHS].get()); }
   Expr *getRHS() { return cast<Expr>(SubExprs[RHS].get()); }
   const Expr *getRHS() const { return cast<Expr>(SubExprs[RHS].get()); }
+};
+
+/// Function calls
+class CallExpr : public Expr {
+public:
+  std::unique_ptr<DeclRefExpr> FunctionName;
+  enum {
+    LEFT,
+    RIGHT,
+    END_EXPR
+  };
+  AnnotatedTokenRef Parens[END_EXPR];
+  llvm::SmallVector<std::unique_ptr<Expr>, 4> Args;
+  llvm::SmallVector<AnnotatedTokenRef, 3> Commas;
+
+  CallExpr(std::unique_ptr<DeclRefExpr> FunctionName)
+      : Expr(CallExprClass), FunctionName(std::move(FunctionName)) {}
+
+  void setParen(int Index, AnnotatedToken *AT) {
+    Parens[Index] = AnnotatedTokenRef(AT, this);
+  }
+  void setLeftParen(AnnotatedToken *AT) { setParen(LEFT, AT); }
+  void setRightParen(AnnotatedToken *AT) { setParen(RIGHT, AT); }
+
+  void append_comma(AnnotatedToken *AT) {
+    Commas.push_back(AnnotatedTokenRef(AT, this));
+  }
+
+  static bool classof(const ASTElement *T) {
+    return T->getASTClass() == CallExprClass;
+  }
 };
 
 llvm::SmallVector<std::unique_ptr<Stmt>, 8> fuzzyparse(AnnotatedToken *first,
