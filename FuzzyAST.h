@@ -36,6 +36,7 @@ public:
     VarInitializationClass,
     VarDeclClass,
     ExprLineStmtClass,
+    ReturnStmtClass,
     CompoundStmtClass,
     DeclStmtClass,
     DeclRefExprClass,
@@ -110,19 +111,34 @@ class LineStmt : public Stmt {
   AnnotatedTokenRef Semi;
 
 protected:
-  LineStmt(ASTElementClass SC) : Stmt(SC), Semi(nullptr) {}
+  LineStmt(ASTElementClass SC, AnnotatedToken *Semi)
+      : Stmt(SC), Semi(Semi, this) {}
+  LineStmt(ASTElementClass SC, nullptr_t) : Stmt(SC), Semi(nullptr) {}
 };
 
 /// An expression terminated by a semicolon
 struct ExprLineStmt : LineStmt {
   ExprLineStmt(std::unique_ptr<Expr> Body, AnnotatedToken *Semi)
-      : LineStmt(ExprLineStmtClass), Body(std::move(Body)), Semi(Semi, this) {}
+      : LineStmt(ExprLineStmtClass, Semi), Body(std::move(Body)) {}
 
   std::unique_ptr<Expr> Body;
-  AnnotatedTokenRef Semi;
 
   static bool classof(const ASTElement *T) {
     return T->getASTClass() == ExprLineStmtClass;
+  }
+};
+
+struct ReturnStmt : LineStmt {
+  ReturnStmt(AnnotatedToken *Return, std::unique_ptr<Expr> Body,
+             AnnotatedToken *Semi)
+      : LineStmt(ReturnStmtClass, Semi), Body(std::move(Body)),
+        Return(Return, this) {}
+
+  std::unique_ptr<Expr> Body;
+  AnnotatedTokenRef Return;
+
+  static bool classof(const ASTElement *T) {
+    return T->getASTClass() == ReturnStmtClass;
   }
 };
 
@@ -242,7 +258,7 @@ struct VarDecl : ASTElement {
 struct DeclStmt : LineStmt {
   llvm::SmallVector<VarDecl, 1> Decls;
 
-  DeclStmt() : LineStmt(DeclStmtClass) {}
+  DeclStmt() : LineStmt(DeclStmtClass, nullptr) {}
 
   static bool classof(const ASTElement *T) {
     return T->getASTClass() == DeclStmtClass;

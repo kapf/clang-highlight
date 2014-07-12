@@ -96,6 +96,12 @@ void ASTPrinter::print(Indented Indent, const Stmt &stmt) {
   } else if (auto *ELS = llvm::dyn_cast<ExprLineStmt>(&stmt)) {
     OS << Indent << "ExprLineStmt\n";
     print(Indent.next(), *ELS->Body);
+  } else if (auto *RS = llvm::dyn_cast<ReturnStmt>(&stmt)) {
+    OS << Indent << "ReturnStmt\n";
+    if (RS->Body)
+      print(Indent.next(), *RS->Body);
+    else
+      OS << Indent.next() << "<void>\n";
   } else {
     llvm_unreachable("TODO: unhandled fuzzy ast node");
   }

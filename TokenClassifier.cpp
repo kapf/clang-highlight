@@ -105,6 +105,15 @@ void highlight(std::unique_ptr<llvm::MemoryBuffer> Source,
     AllTokens.push_back(fuzzy::AnnotatedToken(TmpTok));
     Token &ThisTok = AllTokens.back().Tok;
 
+    StringRef TokenText(SourceMgr.getCharacterData(ThisTok.getLocation()),
+                        ThisTok.getLength());
+
+    if (ThisTok.is(tok::raw_identifier)) {
+      IdentifierInfo &Info = IdentTable.get(TokenText);
+      ThisTok.setIdentifierInfo(&Info);
+      ThisTok.setKind(Info.getTokenID());
+    }
+
     if (ThisTok.is(tok::eof))
       break;
   }
@@ -136,12 +145,13 @@ void highlight(std::unique_ptr<llvm::MemoryBuffer> Source,
       PPMode = true;
     if (PPMode) {
       Class = TokenClass::Preprocessor;
-      if (ThisTok.is(tok::raw_identifier))
+      if (ThisTok.is(tok::identifier))
         PPMode = false;
     }
 
     StringRef TokenText(SourceMgr.getCharacterData(ThisTok.getLocation()),
                         ThisTok.getLength());
+
     if (ThisTok.is(tok::raw_identifier)) {
       IdentifierInfo &Info = IdentTable.get(TokenText);
       ThisTok.setIdentifierInfo(&Info);
