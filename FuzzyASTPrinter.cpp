@@ -51,7 +51,7 @@ void ASTPrinter::print(Indented Indent, const Type &T) {
 
 void ASTPrinter::print(Indented Indent, const VarDecl &DCL) {
   OS << Indent << "VarDecl '" << DCL.NameTok->getText(SourceMgr) << "'\n";
-  print(Indent.next(), DCL.VariableType);
+  print(Indent.next(), *DCL.VariableType);
   if (DCL.Value) {
     const char *InitName[] = { "?", "=", "()", "{}" };
     assert(1 <= DCL.Value->InitType && DCL.Value->InitType < 4);
@@ -88,8 +88,8 @@ void ASTPrinter::print(Indented Indent, const Expr &EXP) {
 void ASTPrinter::print(Indented Indent, const Stmt &stmt) {
   if (auto *DS = llvm::dyn_cast<DeclStmt>(&stmt)) {
     OS << Indent << "DeclStmt\n";
-    for (const VarDecl &VD : DS->Decls)
-      print(Indent.next(), VD);
+    for (const auto &VD : DS->Decls)
+      print(Indent.next(), *VD);
   } else if (auto *UB = llvm::dyn_cast<UnparsableBlock>(&stmt)) {
     (void)UB;
     OS << Indent << "<Unparsable Block>\n";
@@ -102,6 +102,9 @@ void ASTPrinter::print(Indented Indent, const Stmt &stmt) {
       print(Indent.next(), *RS->Body);
     else
       OS << Indent.next() << "<void>\n";
+  } else if (auto *FD = llvm::dyn_cast<FunctionDecl>(&stmt)) {
+    (void)FD;
+    OS << Indent << "FunctionDecl\n";
   } else {
     llvm_unreachable("TODO: unhandled fuzzy ast node");
   }

@@ -25,6 +25,7 @@ struct AnnotatedToken {
 
   Token Tok;
   ASTElement *ASTReference;
+  StringRef Text;
 
   StringRef getText(const SourceManager &SourceMgr) const {
     return StringRef(SourceMgr.getCharacterData(Tok.getLocation()),

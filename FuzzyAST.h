@@ -44,6 +44,7 @@ public:
     UnaryOperatorClass,
     BinaryOperatorClass,
     CallExprClass,
+    FunctionDeclClass,
   };
 
   ASTElement(ASTElementClass SC) : sClass(SC) {}
@@ -249,16 +250,21 @@ struct VarDecl : ASTElement {
     this->NameTok = AnnotatedTokenRef(Tok, this);
   }
 
-  Type VariableType;
+  std::unique_ptr<Type> VariableType;
   AnnotatedTokenRef NameTok;
   llvm::Optional<VarInitialization> Value;
 };
 
 /// Only for variable declarations (for now)
 struct DeclStmt : LineStmt {
-  llvm::SmallVector<VarDecl, 1> Decls;
+  llvm::SmallVector<std::unique_ptr<VarDecl>, 2> Decls;
+  llvm::SmallVector<AnnotatedTokenRef, 1> Commas;
 
   DeclStmt() : LineStmt(DeclStmtClass, nullptr) {}
+
+  void appendComma(AnnotatedToken *Tok) {
+    Commas.push_back(AnnotatedTokenRef(Tok, this));
+  }
 
   static bool classof(const ASTElement *T) {
     return T->getASTClass() == DeclStmtClass;
@@ -369,12 +375,57 @@ public:
   void setLeftParen(AnnotatedToken *AT) { setParen(LEFT, AT); }
   void setRightParen(AnnotatedToken *AT) { setParen(RIGHT, AT); }
 
-  void append_comma(AnnotatedToken *AT) {
+  void appendComma(AnnotatedToken *AT) {
     Commas.push_back(AnnotatedTokenRef(AT, this));
   }
 
   static bool classof(const ASTElement *T) {
     return T->getASTClass() == CallExprClass;
+  }
+};
+
+// =============================================================================
+// Toplevel Declarations
+
+// struct RecordDecl : Stmt { // can also be a statement inside functions
+//   llvm::SmallVector<Stmt> Body;
+//   enum { RECORD, NAME, LEFT_BR, RIGHT_BR, END_EXPR };
+//   AnnotatedTokenRef Toks[END_EXPR];
+// };
+
+struct FunctionDecl : Stmt { // TODO: Not a real statement
+  FunctionDecl() : Stmt(FunctionDeclClass) {}
+  enum {
+    NAME,
+    STATIC,
+    SEMI,
+    LEFT,
+    RIGHT,
+    END_EXPR
+  };
+  AnnotatedTokenRef Refs[END_EXPR];
+  llvm::SmallVector<std::unique_ptr<VarDecl>, 4> Params;
+  llvm::SmallVector<AnnotatedTokenRef, 3> Commas;
+
+  void appendComma(AnnotatedToken *AT) {
+    Commas.push_back(AnnotatedTokenRef(AT, this));
+  }
+
+  std::unique_ptr<Type> ReturnType;
+
+  void setRef(int Index, AnnotatedToken *Tok) {
+    Refs[Index] = AnnotatedTokenRef(Tok, this);
+  }
+  void setLeftParen(AnnotatedToken *Tok) { setRef(LEFT, Tok); }
+  void setRightParen(AnnotatedToken *Tok) { setRef(LEFT, Tok); }
+  void setStatic(AnnotatedToken *Tok) { setRef(STATIC, Tok); }
+  void setName(AnnotatedToken *Tok) { setRef(NAME, Tok); }
+  void setSemicolon(AnnotatedToken *Tok) { setRef(SEMI, Tok); }
+
+  std::unique_ptr<CompoundStmt> Body;
+
+  static bool classof(const ASTElement *T) {
+    return T->getASTClass() == FunctionDeclClass;
   }
 };
 

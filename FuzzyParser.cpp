@@ -86,13 +86,13 @@ static std::unique_ptr<Expr> parseUnaryOperator(TokenFilter &TF) {
 
 static std::unique_ptr<Expr>
 parseCallExpr(TokenFilter &TF, std::unique_ptr<DeclRefExpr> FunctionName) {
-  assert(TF.peek() && TF.peek()->Tok.getKind() == tok::l_paren);
+  assert(checkKind(TF, tok::l_paren));
   auto Func = llvm::make_unique<CallExpr>(std::move(FunctionName));
   Func->setLeftParen(TF.next());
   while (!checkKind(TF, tok::r_paren)) {
     Func->Args.push_back(parseExpression(TF, prec::Comma + 1));
     if (TF.peek()->Tok.getKind() == tok::comma)
-      Func->append_comma(TF.next());
+      Func->appendComma(TF.next());
     else
       break;
   }
@@ -128,6 +128,8 @@ static std::unique_ptr<Expr> parseExpression(TokenFilter &TF, int Precedence) {
   while (TF.peek()) {
     int CurrentPrecedence =
         getBinOpPrecedence(TF.peek()->Tok.getKind(), true, true);
+    if (checkKind(TF, tok::period) || checkKind(TF, tok::arrow))
+      CurrentPrecedence = PrecedenceArrowAndPeriod;
     if (CurrentPrecedence == 0)
       return LeftExpr;
 
@@ -137,7 +139,10 @@ static std::unique_ptr<Expr> parseExpression(TokenFilter &TF, int Precedence) {
     assert(CurrentPrecedence == Precedence);
 
     AnnotatedToken *OperatorTok = TF.next();
+
     auto RightExpr = parseExpression(TF, Precedence + 1);
+    if (!RightExpr)
+      return {};
     LeftExpr = llvm::make_unique<BinaryOperator>(
         std::move(LeftExpr), std::move(RightExpr), OperatorTok);
   }
@@ -161,54 +166,127 @@ static std::unique_ptr<Stmt> tryParseReturnStmt(TokenFilter &TF) {
   Guard.dismiss();
   return llvm::make_unique<ReturnStmt>(Return, std::move(Body), Semi);
 }
+
+static std::unique_ptr<Type> tryParseType(TokenFilter &TF,
+                                          AnnotatedToken *TypeName = nullptr) {
+  auto Guard = TF.guard();
+  std::unique_ptr<Type> T = llvm::make_unique<Type>();
+  if (!TypeName) {
+    if (!checkKind(TF, tok::identifier))
+      return {};
+    TypeName = TF.next();
+  }
+  T->setName(TypeName);
+
+  while (checkKind(TF, tok::star) || checkKind(TF, tok::amp))
+    T->Decorations.push_back(
+        Type::Decoration(checkKind(TF, tok::star) ? Type::Decoration::Pointer
+                                                  : Type::Decoration::Reference,
+                         TF.next())); // Skip pointer derefs.
+  for (auto &Dec : T->Decorations)
+    Dec.fix();
+  Guard.dismiss();
+  return T;
+}
+
+static std::unique_ptr<VarDecl> tryParseVarDecl(TokenFilter &TF,
+                                                AnnotatedToken *TypeName = 0,
+                                                bool NameOptional = false) {
+  auto Guard = TF.guard();
+  auto VD = llvm::make_unique<VarDecl>();
+  VarDecl &D = *VD;
+  if (!TypeName) {
+    if (!checkKind(TF, tok::identifier))
+      return {};
+    TypeName = TF.next();
+  }
+
+  D.VariableType = tryParseType(TF, TypeName);
+  if (!D.VariableType)
+    return {};
+
+  if (checkKind(TF, tok::identifier)) {
+    D.setName(TF.next());
+  } else if (!NameOptional) {
+    return {};
+  }
+
+  if (checkKind(TF, tok::equal)) {
+    auto *EqualTok = TF.next();
+    if (auto Value = parseExpression(TF, prec::Comma + 1)) {
+      D.Value = VarInitialization();
+      D.Value->setAssignmentOps(VarInitialization::ASSIGNMENT, EqualTok);
+      D.Value->Value = std::move(Value);
+    } else {
+      return {};
+    }
+  } else {
+    // TODO: var(init) and var{init} not yet implemented
+  }
+  Guard.dismiss();
+  return VD;
+}
+
 static std::unique_ptr<Stmt> tryParseDeclStmt(TokenFilter &TF) {
   auto Guard = TF.guard();
 
   // Form: identifier [any number of '*'] identifier '='
-  if (!checkKind(TF, tok::identifier))
+  if (!checkKind(TF, tok::identifier) && !checkKind(TF, tok::kw_auto))
     return nullptr;
   AnnotatedToken *TypeName = TF.next();
   auto Declaration = llvm::make_unique<DeclStmt>();
 
   while (TF.peek()) {
-    Declaration->Decls.push_back(VarDecl());
-    VarDecl &D = Declaration->Decls.back();
-    D.VariableType.setName(TypeName);
-
-    while (checkKind(TF, tok::star))
-      D.VariableType.Decorations.push_back(Type::Decoration(
-          Type::Decoration::Pointer, TF.next())); // Skip pointer derefs.
-    for (auto &Dec : D.VariableType.Decorations)
-      Dec.fix();
-
-    if (!checkKind(TF, tok::identifier))
-      return {};
-
-    D.setName(TF.next());
-
-    if (checkKind(TF, tok::equal)) {
-      auto *EqualTok = TF.next();
-      if (auto Value = parseExpression(TF, prec::Comma + 1)) {
-        D.Value = VarInitialization();
-        D.Value->setAssignmentOps(VarInitialization::ASSIGNMENT, EqualTok);
-        D.Value->Value = std::move(Value);
-      } else {
-        return {};
-      }
-    } else {
-      // TODO: var(init) and var{init} not yet implemented
-    }
-
     if (checkKind(TF, tok::semi)) {
       Guard.dismiss();
       return std::move(Declaration);
     }
-    if (!checkKind(TF, tok::comma))
+    if (auto D = tryParseVarDecl(TF, TypeName))
+      Declaration->Decls.push_back(std::move(D));
+    else
       return {};
-    TF.next();
+    if (checkKind(TF, tok::comma))
+      Declaration->appendComma(TF.next());
+    else if (!checkKind(TF, tok::semi))
+      return {};
   }
 
   return nullptr;
+}
+
+static std::unique_ptr<FunctionDecl> tryParseFunctionStmt(TokenFilter &TF) {
+  auto Guard = TF.guard();
+  auto F = llvm::make_unique<FunctionDecl>();
+  if (checkKind(TF, tok::kw_static))
+    F->setStatic(TF.next());
+  if (auto Type = tryParseType(TF))
+    F->ReturnType = std::move(Type);
+  else
+    return {};
+
+  if (!checkKind(TF, tok::identifier))
+    return {};
+  F->setName(TF.next());
+
+  if (!checkKind(TF, tok::l_paren))
+    return {};
+
+  F->setLeftParen(TF.next());
+  while (!checkKind(TF, tok::r_paren)) {
+    F->Params.push_back(tryParseVarDecl(TF, 0, true));
+    if (!F->Params.back())
+      return {};
+    if (checkKind(TF, tok::comma))
+      F->appendComma(TF.next());
+    else
+      break;
+  }
+  if (checkKind(TF, tok::r_paren)) {
+    Guard.dismiss();
+    F->setRightParen(TF.next());
+    return std::move(F);
+  }
+  return {};
 }
 
 static std::unique_ptr<Stmt> skipUnparsable(TokenFilter &TF) {
@@ -229,6 +307,8 @@ static std::unique_ptr<Stmt> parseAny(TokenFilter &TF) {
     return S;
   if (auto S = tryParseDeclStmt(TF))
     return S;
+  if (auto S = tryParseFunctionStmt(TF))
+    return std::move(S);
   {
     auto Guard = TF.guard();
     if (auto E = parseExpression(TF)) {

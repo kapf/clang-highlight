@@ -113,6 +113,7 @@ void highlight(std::unique_ptr<llvm::MemoryBuffer> Source,
       ThisTok.setIdentifierInfo(&Info);
       ThisTok.setKind(Info.getTokenID());
     }
+    AllTokens.back().Text = AllTokens.back().getText(SourceMgr);
 
     if (ThisTok.is(tok::eof))
       break;
