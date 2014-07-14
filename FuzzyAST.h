@@ -11,6 +11,7 @@
 #define LLVM_CLANG_TOOLS_CLANG_HIGHLIGHT_FUZZY_AST_H
 
 #include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/STLExtras.h"
 #include "clang/Basic/SourceManager.h"
 #include "AnnotatedToken.h"
 #include <memory>
@@ -200,14 +201,49 @@ struct Type : ASTElement {
     }
   };
   llvm::SmallVector<Decoration, 1> Decorations;
-  AnnotatedTokenRef NameTok;
+  struct Qualifier {
+    Qualifier(AnnotatedToken *ColonColonTok, AnnotatedToken *NameTok,
+              ASTElement *Ref)
+        : ColonColon(ColonColonTok ? AnnotatedTokenRef(ColonColonTok, Ref)
+                                   : nullptr),
+          Name(NameTok, Ref) {}
+    AnnotatedTokenRef ColonColon, Name;
+  };
+  llvm::SmallVector<Qualifier, 1> QualifiedID;
+
+  void addNameQualifier(AnnotatedToken *ColonColon, AnnotatedToken *Name) {
+    assert(QualifiedID.empty() || ColonColon);
+    assert(Name);
+    QualifiedID.push_back(Qualifier(ColonColon, Name, this));
+  }
 
   void setName(AnnotatedToken *NameTok) {
-    this->NameTok = AnnotatedTokenRef(NameTok, this);
+    QualifiedID.push_back(Qualifier(nullptr, NameTok, this));
   }
 
   static bool classof(const ASTElement *T) {
     return T->getASTClass() == TypeClass;
+  }
+
+  struct TemplateArguments {
+    llvm::SmallVector<std::unique_ptr<Type>, 2> Args;
+    llvm::SmallVector<AnnotatedTokenRef, 3> Separators;
+  };
+  llvm::Optional<std::unique_ptr<TemplateArguments> > TemplateArgs;
+
+  void makeTemplateArgs() {
+    TemplateArgs = llvm::make_unique<TemplateArguments>();
+  }
+  TemplateArguments &getTemplateArgs() { return **TemplateArgs; }
+
+  std::unique_ptr<Type> cloneQualifiedID() {
+    auto Clone = llvm::make_unique<Type>();
+    Clone->QualifiedID.reserve(QualifiedID.size());
+    for (auto &Q : QualifiedID) {
+      Clone->QualifiedID.push_back(
+          Qualifier(Q.ColonColon.get(), Q.Name.get(), Clone.get()));
+    }
+    return Clone;
   }
 };
 

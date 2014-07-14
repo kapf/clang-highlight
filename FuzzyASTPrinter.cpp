@@ -46,7 +46,13 @@ void ASTPrinter::print(Indented Indent, const Type &T) {
   OS << Indent << "Type ";
   for (auto &D : T.Decorations)
     OS << '\'' << D.Tok->getText(SourceMgr) << "' ";
-  OS << '\'' << T.NameTok->getText(SourceMgr) << "'\n";
+  OS << '\'';
+  for (auto &ID : T.QualifiedID) {
+    if (ID.ColonColon)
+      OS << ID.ColonColon->getText(SourceMgr);
+    OS << ID.Name->getText(SourceMgr);
+  }
+  OS << "'\n";
 }
 
 void ASTPrinter::print(Indented Indent, const VarDecl &DCL) {

@@ -167,43 +167,62 @@ static std::unique_ptr<Stmt> tryParseReturnStmt(TokenFilter &TF) {
   return llvm::make_unique<ReturnStmt>(Return, std::move(Body), Semi);
 }
 
+static void parseTypeDecorations(TokenFilter &TF, Type &T) {
+  while (checkKind(TF, tok::star) || checkKind(TF, tok::amp))
+    T.Decorations.push_back(Type::Decoration(checkKind(TF, tok::star)
+                                                 ? Type::Decoration::Pointer
+                                                 : Type::Decoration::Reference,
+                                             TF.next()));
+  for (auto &Dec : T.Decorations)
+    Dec.fix();
+}
+
 static std::unique_ptr<Type> tryParseType(TokenFilter &TF,
-                                          AnnotatedToken *TypeName = nullptr) {
+                                          bool WithDecorations = true) {
   auto Guard = TF.guard();
   std::unique_ptr<Type> T = llvm::make_unique<Type>();
-  if (!TypeName) {
-    if (!checkKind(TF, tok::identifier))
-      return {};
-    TypeName = TF.next();
-  }
-  T->setName(TypeName);
 
-  while (checkKind(TF, tok::star) || checkKind(TF, tok::amp))
-    T->Decorations.push_back(
-        Type::Decoration(checkKind(TF, tok::star) ? Type::Decoration::Pointer
-                                                  : Type::Decoration::Reference,
-                         TF.next())); // Skip pointer derefs.
-  for (auto &Dec : T->Decorations)
-    Dec.fix();
+  if (checkKind(TF, tok::kw_auto)) {
+    T->addNameQualifier(nullptr, TF.next());
+  } else {
+    bool GlobalNamespaceColon = true;
+    do {
+      AnnotatedToken *ColCol = nullptr;
+      if (checkKind(TF, tok::coloncolon))
+        ColCol = TF.next();
+      else if (!GlobalNamespaceColon)
+        return {};
+      GlobalNamespaceColon = false;
+      if (!checkKind(TF, tok::identifier))
+        return {};
+      T->addNameQualifier(ColCol, TF.next());
+    } while (checkKind(TF, tok::coloncolon));
+  }
+
+  if (WithDecorations)
+    parseTypeDecorations(TF, *T);
+
   Guard.dismiss();
   return T;
 }
 
 static std::unique_ptr<VarDecl> tryParseVarDecl(TokenFilter &TF,
-                                                AnnotatedToken *TypeName = 0,
+                                                Type *TypeName = 0,
                                                 bool NameOptional = false) {
   auto Guard = TF.guard();
   auto VD = llvm::make_unique<VarDecl>();
   VarDecl &D = *VD;
+
+  std::unique_ptr<Type> TypeName2;
   if (!TypeName) {
-    if (!checkKind(TF, tok::identifier))
+    TypeName2 = tryParseType(TF);
+    if (!TypeName2)
       return {};
-    TypeName = TF.next();
+    TypeName = TypeName2.get();
   }
 
-  D.VariableType = tryParseType(TF, TypeName);
-  if (!D.VariableType)
-    return {};
+  D.VariableType = TypeName->cloneQualifiedID();
+  parseTypeDecorations(TF, *D.VariableType);
 
   if (checkKind(TF, tok::identifier)) {
     D.setName(TF.next());
@@ -230,10 +249,9 @@ static std::unique_ptr<VarDecl> tryParseVarDecl(TokenFilter &TF,
 static std::unique_ptr<Stmt> tryParseDeclStmt(TokenFilter &TF) {
   auto Guard = TF.guard();
 
-  // Form: identifier [any number of '*'] identifier '='
-  if (!checkKind(TF, tok::identifier) && !checkKind(TF, tok::kw_auto))
-    return nullptr;
-  AnnotatedToken *TypeName = TF.next();
+  auto TypeName = tryParseType(TF, /*WithDecorations=*/false);
+  if (!TypeName)
+    return {};
   auto Declaration = llvm::make_unique<DeclStmt>();
 
   while (TF.peek()) {
@@ -241,7 +259,7 @@ static std::unique_ptr<Stmt> tryParseDeclStmt(TokenFilter &TF) {
       Guard.dismiss();
       return std::move(Declaration);
     }
-    if (auto D = tryParseVarDecl(TF, TypeName))
+    if (auto D = tryParseVarDecl(TF, TypeName.get()))
       Declaration->Decls.push_back(std::move(D));
     else
       return {};

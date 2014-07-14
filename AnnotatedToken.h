@@ -51,36 +51,35 @@ public:
 
   AnnotatedTokenRef(AnnotatedTokenRef const &o, ASTElement *AstRef)
       : ATok(o.ATok) {
-    assert(ATok);
-    ATok->setASTReference(AstRef);
+    if (ATok)
+      ATok->setASTReference(AstRef);
   }
 
   AnnotatedTokenRef &operator=(const AnnotatedTokenRef &) = delete;
   AnnotatedTokenRef &operator=(AnnotatedTokenRef &&) = default;
 
-  AnnotatedToken &operator*() {
+  operator bool() const { return ATok; }
+  AnnotatedToken *get() { return ATok; }
+  AnnotatedToken *get() const { return ATok; }
+
+  AnnotatedToken &getRef() {
     assert(*this);
     return *ATok;
   }
-  AnnotatedToken const &operator*() const {
+  const AnnotatedToken &getRef() const {
     assert(*this);
     return *ATok;
   }
-  AnnotatedToken *operator->() {
-    assert(*this);
-    return ATok;
-  }
-  AnnotatedToken const *operator->() const {
-    assert(*this);
-    return ATok;
-  }
+
+  AnnotatedToken &operator*() { return getRef(); }
+  AnnotatedToken const &operator*() const { return getRef(); }
+  AnnotatedToken *operator->() { return &getRef(); }
+  AnnotatedToken const *operator->() const { return &getRef(); }
 
   AnnotatedTokenRef &operator=(AnnotatedToken *ATok) {
     this->ATok = ATok;
     return *this;
   }
-
-  operator bool() const { return ATok; }
 };
 
 } // end namespace fuzzy
