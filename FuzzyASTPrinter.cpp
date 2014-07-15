@@ -52,6 +52,15 @@ void ASTPrinter::print(Indented Indent, const Type &T) {
       OS << ID.ColonColon->getText(SourceMgr);
     OS << ID.Name->getText(SourceMgr);
   }
+  if (T.TemplateArgs) {
+    OS << '\n' << Indent.next() << "<\n";
+    for (auto &A : (*T.TemplateArgs)->Args)
+      if (A.isType())
+        print(Indent.next().next(), A.asType());
+      else
+        print(Indent.next().next(), A.asExpr());
+    OS << '\n' << Indent.next() << '>';
+  }
   OS << "'\n";
 }
 
@@ -75,12 +84,17 @@ void ASTPrinter::print(Indented Indent, const Expr &EXP) {
        << '\n';
     print(Indent.next(), *BinOp->getRHS());
   } else if (auto *Decl = llvm::dyn_cast<DeclRefExpr>(&EXP)) {
-    OS << Indent << Decl->Tok->getText(SourceMgr) << '\n';
+    OS << Indent;
+    for (auto &T : Decl->Toks)
+      OS << T->getText(SourceMgr) << ' ';
+    OS << '\n';
   } else if (auto *Lit = llvm::dyn_cast<LiteralConstant>(&EXP)) {
     OS << Indent << Lit->Tok->getText(SourceMgr) << '\n';
   } else if (auto *Call = llvm::dyn_cast<CallExpr>(&EXP)) {
-    OS << Indent << "call expr '" << Call->FunctionName->Tok->getText(SourceMgr)
-       << "'\n";
+    OS << Indent << "call expr '";
+    for (auto &T : Call->FunctionName->Toks)
+      OS << T->getText(SourceMgr) << ' ';
+    OS << "'\n";
     for (auto &Arg : Call->Args)
       print(Indent.next(), *Arg);
   } else if (auto *Unar = llvm::dyn_cast<UnaryOperator>(&EXP)) {

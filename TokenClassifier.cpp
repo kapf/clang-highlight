@@ -162,7 +162,9 @@ void highlight(std::unique_ptr<llvm::MemoryBuffer> Source,
     unsigned ThisLoc = SourceMgr.getFileOffset(ThisTok.getLocation());
     if (std::binary_search(PH.TypeOffsets.begin(), PH.TypeOffsets.end(),
                            ThisLoc) ||
-        (ATok.ASTReference && llvm::isa<fuzzy::Type>(ATok.ASTReference))) {
+        (ATok.ASTReference &&
+         (llvm::isa<fuzzy::Type>(ATok.ASTReference) ||
+          llvm::isa<fuzzy::Type::Decoration>(ATok.ASTReference)))) {
       ThisTok.setKind(tok::annot_typename);
     }
 

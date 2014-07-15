@@ -36,6 +36,7 @@ public:
     TypeDecorationClass,
     VarInitializationClass,
     VarDeclClass,
+    firstExpr,
     ExprLineStmtClass,
     ReturnStmtClass,
     CompoundStmtClass,
@@ -45,6 +46,7 @@ public:
     UnaryOperatorClass,
     BinaryOperatorClass,
     CallExprClass,
+    lastExpr,
     FunctionDeclClass,
   };
 
@@ -54,6 +56,129 @@ public:
 
 private:
   ASTElementClass sClass;
+};
+
+/// An expression in it's classical sense.  If an expression is used as a
+/// statement, it has to be embedded into a ExprStmt (yet to be implemented).
+/// Rationale is that there is otherwise no way to store the semicolon.
+class Expr : public ASTElement {
+protected:
+  Expr(ASTElementClass SC) : ASTElement(SC) {}
+
+public:
+  virtual ~Expr() = 0;
+  static bool classof(const ASTElement *T) {
+    return firstExpr <= T->getASTClass() && T->getASTClass() <= lastExpr;
+  }
+};
+inline Expr::~Expr() {}
+
+// A variable name or function name inside an expression.
+class DeclRefExpr : public Expr {
+public:
+  llvm::SmallVector<AnnotatedTokenRef, 3> Toks;
+
+  DeclRefExpr(AnnotatedToken *Tok) : Expr(DeclRefExprClass), Toks() {
+    addQualifier(Tok);
+  }
+  void addQualifier(AnnotatedToken *Tok) {
+    Toks.push_back(AnnotatedTokenRef(Tok, this));
+  }
+
+  static bool classof(const ASTElement *T) {
+    return T->getASTClass() == DeclRefExprClass;
+  }
+};
+
+/// Int, char or string literals
+class LiteralConstant : public Expr {
+public:
+  AnnotatedTokenRef Tok;
+  LiteralConstant(AnnotatedToken *Tok)
+      : Expr(LiteralConstantClass), Tok(Tok, this) {
+    Tok->setASTReference(this);
+  }
+
+  static bool classof(const ASTElement *T) {
+    return T->getASTClass() == LiteralConstantClass;
+  }
+};
+
+/// Any unary operator, even the overloaded ones.
+class UnaryOperator : public Expr {
+public:
+  AnnotatedTokenRef OperatorTok;
+  std::unique_ptr<Expr> Value;
+
+  UnaryOperator(AnnotatedToken *OperatorTok, std::unique_ptr<Expr> Value)
+      : Expr(UnaryOperatorClass), OperatorTok(OperatorTok, this),
+        Value(std::move(Value)) {
+    OperatorTok->setASTReference(this);
+  }
+
+  static bool classof(const ASTElement *T) {
+    return T->getASTClass() == UnaryOperatorClass;
+  }
+};
+
+/// Used to store any kind of binary operators, even the overloaded ones.
+class BinaryOperator : public Expr {
+  enum {
+    LHS,
+    RHS,
+    END_EXPR
+  };
+  std::unique_ptr<Expr> SubExprs[END_EXPR];
+
+public:
+  AnnotatedTokenRef OperatorTok;
+
+  BinaryOperator(std::unique_ptr<Expr> lhs, std::unique_ptr<Expr> rhs,
+                 AnnotatedToken *OperatorTok)
+      : Expr(BinaryOperatorClass), OperatorTok(OperatorTok, this) {
+    SubExprs[LHS] = std::move(lhs);
+    SubExprs[RHS] = std::move(rhs);
+  }
+
+  static bool classof(const ASTElement *T) {
+    return T->getASTClass() == BinaryOperatorClass;
+  }
+
+  Expr *getLHS() { return cast<Expr>(SubExprs[LHS].get()); }
+  const Expr *getLHS() const { return cast<Expr>(SubExprs[LHS].get()); }
+  Expr *getRHS() { return cast<Expr>(SubExprs[RHS].get()); }
+  const Expr *getRHS() const { return cast<Expr>(SubExprs[RHS].get()); }
+};
+
+/// Function calls
+class CallExpr : public Expr {
+public:
+  std::unique_ptr<DeclRefExpr> FunctionName;
+  enum {
+    LEFT,
+    RIGHT,
+    END_EXPR
+  };
+  AnnotatedTokenRef Parens[END_EXPR];
+  llvm::SmallVector<std::unique_ptr<Expr>, 4> Args;
+  llvm::SmallVector<AnnotatedTokenRef, 3> Commas;
+
+  CallExpr(std::unique_ptr<DeclRefExpr> FunctionName)
+      : Expr(CallExprClass), FunctionName(std::move(FunctionName)) {}
+
+  void setParen(int Index, AnnotatedToken *AT) {
+    Parens[Index] = AnnotatedTokenRef(AT, this);
+  }
+  void setLeftParen(AnnotatedToken *AT) { setParen(LEFT, AT); }
+  void setRightParen(AnnotatedToken *AT) { setParen(RIGHT, AT); }
+
+  void appendComma(AnnotatedToken *AT) {
+    Commas.push_back(AnnotatedTokenRef(AT, this));
+  }
+
+  static bool classof(const ASTElement *T) {
+    return T->getASTClass() == CallExprClass;
+  }
 };
 
 /// In contrast to the clang AST, a Stmt is a real statement, that is either a
@@ -212,7 +337,6 @@ struct Type : ASTElement {
   llvm::SmallVector<Qualifier, 1> QualifiedID;
 
   void addNameQualifier(AnnotatedToken *ColonColon, AnnotatedToken *Name) {
-    assert(QualifiedID.empty() || ColonColon);
     assert(Name);
     QualifiedID.push_back(Qualifier(ColonColon, Name, this));
   }
@@ -225,16 +349,55 @@ struct Type : ASTElement {
     return T->getASTClass() == TypeClass;
   }
 
+  class TypeOrExpression {
+    ASTElement *Ptr;
+
+  public:
+    TypeOrExpression(std::unique_ptr<Type> T) : Ptr(T.release()) {}
+    TypeOrExpression(std::unique_ptr<Expr> E) : Ptr(E.release()) {}
+    TypeOrExpression(const TypeOrExpression &) = delete;
+    TypeOrExpression &operator=(const TypeOrExpression &) = delete;
+    TypeOrExpression(TypeOrExpression &&O) : Ptr(O.Ptr) { O.Ptr = nullptr; }
+    TypeOrExpression &operator=(TypeOrExpression &&O) {
+      std::swap(Ptr, O.Ptr);
+      return *this;
+    }
+
+    ~TypeOrExpression() {
+      if (Ptr) {
+        if (Type *T = dyn_cast<Type>(Ptr))
+          delete T;
+        else
+          delete cast<Expr>(Ptr);
+      }
+    }
+
+    bool isType() const {
+      assert(Ptr);
+      return isa<Type>(Ptr);
+    }
+    Type &asType() { return *cast<Type>(Ptr); }
+    Expr &asExpr() { return *cast<Expr>(Ptr); }
+  };
+
   struct TemplateArguments {
-    llvm::SmallVector<std::unique_ptr<Type>, 2> Args;
+    llvm::SmallVector<TypeOrExpression, 2> Args;
     llvm::SmallVector<AnnotatedTokenRef, 3> Separators;
   };
-  llvm::Optional<std::unique_ptr<TemplateArguments> > TemplateArgs;
+  llvm::Optional<std::shared_ptr<TemplateArguments> > TemplateArgs;
 
   void makeTemplateArgs() {
-    TemplateArgs = llvm::make_unique<TemplateArguments>();
+    TemplateArgs = std::make_shared<TemplateArguments>();
   }
-  TemplateArguments &getTemplateArgs() { return **TemplateArgs; }
+  void addTemplateSeparator(AnnotatedToken *ATok) {
+    (*TemplateArgs)->Separators.push_back(AnnotatedTokenRef(ATok, this));
+  }
+  void addTemplateArgument(std::unique_ptr<Type> T) {
+    (*TemplateArgs)->Args.push_back(TypeOrExpression(std::move(T)));
+  }
+  void addTemplateArgument(std::unique_ptr<Expr> E) {
+    (*TemplateArgs)->Args.push_back(TypeOrExpression(std::move(E)));
+  }
 
   std::unique_ptr<Type> cloneQualifiedID() {
     auto Clone = llvm::make_unique<Type>();
@@ -243,6 +406,8 @@ struct Type : ASTElement {
       Clone->QualifiedID.push_back(
           Qualifier(Q.ColonColon.get(), Q.Name.get(), Clone.get()));
     }
+    if (TemplateArgs)
+      Clone->TemplateArgs = *TemplateArgs;
     return Clone;
   }
 };
@@ -304,119 +469,6 @@ struct DeclStmt : LineStmt {
 
   static bool classof(const ASTElement *T) {
     return T->getASTClass() == DeclStmtClass;
-  }
-};
-
-/// An expression in it's classical sense.  If an expression is used as a
-/// statement, it has to be embedded into a ExprStmt (yet to be implemented).
-/// Rationale is that there is otherwise no way to store the semicolon.
-struct Expr : ASTElement {
-  Expr(ASTElementClass SC) : ASTElement(SC) {}
-  virtual ~Expr() = 0;
-};
-inline Expr::~Expr() {}
-
-// A variable name or function name inside an expression.
-class DeclRefExpr : public Expr {
-public:
-  AnnotatedTokenRef Tok;
-  DeclRefExpr(AnnotatedToken *Tok) : Expr(DeclRefExprClass), Tok(Tok, this) {
-    Tok->setASTReference(this);
-  }
-
-  static bool classof(const ASTElement *T) {
-    return T->getASTClass() == DeclRefExprClass;
-  }
-};
-
-/// Int, char or string literals
-class LiteralConstant : public Expr {
-public:
-  AnnotatedTokenRef Tok;
-  LiteralConstant(AnnotatedToken *Tok)
-      : Expr(LiteralConstantClass), Tok(Tok, this) {
-    Tok->setASTReference(this);
-  }
-
-  static bool classof(const ASTElement *T) {
-    return T->getASTClass() == LiteralConstantClass;
-  }
-};
-
-/// Any unary operator, even the overloaded ones.
-class UnaryOperator : public Expr {
-public:
-  AnnotatedTokenRef OperatorTok;
-  std::unique_ptr<Expr> Value;
-
-  UnaryOperator(AnnotatedToken *OperatorTok, std::unique_ptr<Expr> Value)
-      : Expr(UnaryOperatorClass), OperatorTok(OperatorTok, this),
-        Value(std::move(Value)) {
-    OperatorTok->setASTReference(this);
-  }
-
-  static bool classof(const ASTElement *T) {
-    return T->getASTClass() == UnaryOperatorClass;
-  }
-};
-
-/// Used to store any kind of binary operators, even the overloaded ones.
-class BinaryOperator : public Expr {
-  enum {
-    LHS,
-    RHS,
-    END_EXPR
-  };
-  std::unique_ptr<Expr> SubExprs[END_EXPR];
-
-public:
-  AnnotatedTokenRef OperatorTok;
-
-  BinaryOperator(std::unique_ptr<Expr> lhs, std::unique_ptr<Expr> rhs,
-                 AnnotatedToken *OperatorTok)
-      : Expr(BinaryOperatorClass), OperatorTok(OperatorTok, this) {
-    SubExprs[LHS] = std::move(lhs);
-    SubExprs[RHS] = std::move(rhs);
-  }
-
-  static bool classof(const ASTElement *T) {
-    return T->getASTClass() == BinaryOperatorClass;
-  }
-
-  Expr *getLHS() { return cast<Expr>(SubExprs[LHS].get()); }
-  const Expr *getLHS() const { return cast<Expr>(SubExprs[LHS].get()); }
-  Expr *getRHS() { return cast<Expr>(SubExprs[RHS].get()); }
-  const Expr *getRHS() const { return cast<Expr>(SubExprs[RHS].get()); }
-};
-
-/// Function calls
-class CallExpr : public Expr {
-public:
-  std::unique_ptr<DeclRefExpr> FunctionName;
-  enum {
-    LEFT,
-    RIGHT,
-    END_EXPR
-  };
-  AnnotatedTokenRef Parens[END_EXPR];
-  llvm::SmallVector<std::unique_ptr<Expr>, 4> Args;
-  llvm::SmallVector<AnnotatedTokenRef, 3> Commas;
-
-  CallExpr(std::unique_ptr<DeclRefExpr> FunctionName)
-      : Expr(CallExprClass), FunctionName(std::move(FunctionName)) {}
-
-  void setParen(int Index, AnnotatedToken *AT) {
-    Parens[Index] = AnnotatedTokenRef(AT, this);
-  }
-  void setLeftParen(AnnotatedToken *AT) { setParen(LEFT, AT); }
-  void setRightParen(AnnotatedToken *AT) { setParen(RIGHT, AT); }
-
-  void appendComma(AnnotatedToken *AT) {
-    Commas.push_back(AnnotatedTokenRef(AT, this));
-  }
-
-  static bool classof(const ASTElement *T) {
-    return T->getASTClass() == CallExprClass;
   }
 };
 

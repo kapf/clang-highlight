@@ -72,9 +72,9 @@ public:
   }
 
   AnnotatedToken &operator*() { return getRef(); }
-  AnnotatedToken const &operator*() const { return getRef(); }
+  const AnnotatedToken &operator*() const { return getRef(); }
   AnnotatedToken *operator->() { return &getRef(); }
-  AnnotatedToken const *operator->() const { return &getRef(); }
+  const AnnotatedToken *operator->() const { return &getRef(); }
 
   AnnotatedTokenRef &operator=(AnnotatedToken *ATok) {
     this->ATok = ATok;
