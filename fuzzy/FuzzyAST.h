@@ -319,6 +319,11 @@ protected:
   LineStmt(ASTElementClass SC, AnnotatedToken *Semi)
       : Stmt(SC), Semi(Semi, this) {}
   LineStmt(ASTElementClass SC, nullptr_t) : Stmt(SC), Semi(nullptr) {}
+
+public:
+  void setSemi(AnnotatedToken *Tok) {
+    Semi = AnnotatedTokenRef(Tok, this);
+  }
 };
 
 /// An expression terminated by a semicolon
@@ -496,6 +501,10 @@ struct VarDecl : ASTElement {
   std::unique_ptr<Type> VariableType;
   AnnotatedTokenRef NameTok;
   llvm::Optional<VarInitialization> Value;
+
+  static bool classof(const ASTElement *T) {
+    return T->getASTClass() == VarDeclClass;
+  }
 };
 
 /// Only for variable declarations (for now)
@@ -513,15 +522,6 @@ struct DeclStmt : LineStmt {
     return T->getASTClass() == DeclStmtClass;
   }
 };
-
-// =============================================================================
-// Toplevel Declarations
-
-// struct RecordDecl : Stmt { // can also be a statement inside functions
-//   llvm::SmallVector<Stmt> Body;
-//   enum { RECORD, NAME, LEFT_BR, RIGHT_BR, END_EXPR };
-//   AnnotatedTokenRef Toks[END_EXPR];
-// };
 
 struct FunctionDecl : Stmt { // TODO: Not a real statement
   FunctionDecl() : Stmt(FunctionDeclClass) {}

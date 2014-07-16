@@ -188,7 +188,6 @@ static std::unique_ptr<Expr> parseExpression(TokenFilter &TF, int Precedence,
     }
 
     return {};
-    llvm_unreachable("expression not separable into operators and operands");
   }
   auto LeftExpr = parseExpression(TF, Precedence + 1, StopAtGreater);
 
@@ -348,6 +347,7 @@ static std::unique_ptr<Stmt> parseDeclStmt(TokenFilter &TF) {
 
   while (TF.peek()) {
     if (checkKind(TF, tok::semi)) {
+      Declaration->setSemi(TF.next());
       Guard.dismiss();
       return std::move(Declaration);
     }
