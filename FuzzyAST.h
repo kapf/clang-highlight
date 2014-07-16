@@ -18,6 +18,10 @@
 
 using namespace clang;
 
+namespace llvm {
+class raw_ostream;
+}
+
 namespace clang {
 namespace fuzzy {
 
@@ -73,16 +77,90 @@ public:
 };
 inline Expr::~Expr() {}
 
+
+class Type;
+
+struct QualifiedID {
+  class TypeOrExpression {
+    ASTElement *Ptr;
+
+  public:
+    TypeOrExpression(std::unique_ptr<Type> T); // : Ptr(T.release()) {}
+    TypeOrExpression(std::unique_ptr<Expr> E) : Ptr(E.release()) {}
+    TypeOrExpression(const TypeOrExpression &) = delete;
+    TypeOrExpression &operator=(const TypeOrExpression &) = delete;
+    TypeOrExpression(TypeOrExpression &&O) : Ptr(O.Ptr) { O.Ptr = nullptr; }
+    TypeOrExpression &operator=(TypeOrExpression &&O) {
+      std::swap(Ptr, O.Ptr);
+      return *this;
+    }
+
+    ~TypeOrExpression();
+
+    bool isType() const {
+      assert(Ptr);
+      return isa<Type>(Ptr);
+    }
+    Type &asType() { return *cast<Type>(Ptr); }
+    Expr &asExpr() { return *cast<Expr>(Ptr); }
+  };
+
+  struct TemplateArguments {
+    llvm::SmallVector<TypeOrExpression, 2> Args;
+    llvm::SmallVector<AnnotatedTokenRef, 3> Separators;
+  };
+
+  llvm::SmallVector<AnnotatedTokenRef, 1> NameSegments;
+  llvm::Optional<std::shared_ptr<TemplateArguments> > TemplateArgs;
+
+  void reown(ASTElement *Ref) {
+    for (auto &N : NameSegments)
+      N->setASTReference(Ref);
+    if (TemplateArgs) {
+      for (auto& ATok : (*TemplateArgs)->Separators)
+        ATok->setASTReference(Ref);
+    }
+  }
+
+  void addNameQualifier(AnnotatedToken *NameTok, ASTElement *Ref) {
+    NameSegments.push_back(AnnotatedTokenRef(NameTok, Ref));
+  }
+
+  void makeTemplateArgs() {
+    TemplateArgs = std::make_shared<TemplateArguments>();
+  }
+  void addTemplateSeparator(AnnotatedToken *ATok, ASTElement *Ref) {
+    (*TemplateArgs)->Separators.push_back(AnnotatedTokenRef(ATok, Ref));
+  }
+  void addTemplateArgument(std::unique_ptr<Type> T) {
+    (*TemplateArgs)->Args.push_back(TypeOrExpression(std::move(T)));
+  }
+  void addTemplateArgument(std::unique_ptr<Expr> E) {
+    (*TemplateArgs)->Args.push_back(TypeOrExpression(std::move(E)));
+  }
+};
+
 // A variable name or function name inside an expression.
 class DeclRefExpr : public Expr {
 public:
-  llvm::SmallVector<AnnotatedTokenRef, 3> Toks;
+  QualifiedID Qualifier;
 
-  DeclRefExpr(AnnotatedToken *Tok) : Expr(DeclRefExprClass), Toks() {
-    addQualifier(Tok);
+  DeclRefExpr() : Expr(DeclRefExprClass) {}
+
+  void addNameQualifier(AnnotatedToken *NameTok) {
+    Qualifier.addNameQualifier(NameTok, this);
   }
-  void addQualifier(AnnotatedToken *Tok) {
-    Toks.push_back(AnnotatedTokenRef(Tok, this));
+  void makeTemplateArgs() {
+    Qualifier.makeTemplateArgs();
+  }
+  void addTemplateSeparator(AnnotatedToken *ATok) {
+    Qualifier.addTemplateSeparator(ATok, this);
+  }
+  void addTemplateArgument(std::unique_ptr<Type> T) {
+    Qualifier.addTemplateArgument(std::move(T));
+  }
+  void addTemplateArgument(std::unique_ptr<Expr> E) {
+    Qualifier.addTemplateArgument(std::move(E));
   }
 
   static bool classof(const ASTElement *T) {
@@ -315,102 +393,66 @@ struct Type : ASTElement {
       Reference,
     };
     Decoration(DecorationClass Class, AnnotatedToken *Tok)
-        : ASTElement(TypeDecorationClass), Class(Class), Tok(Tok, this) {}
+        : ASTElement(TypeDecorationClass), Class(Class), Tok(Tok) {}
     DecorationClass Class;
-    AnnotatedTokenRef Tok;
+    AnnotatedToken *Tok;
 
-    void fix() { Tok = AnnotatedTokenRef(Tok, this); }
+    void fix() { Tok->setASTReference(this); }
 
     static bool classof(const ASTElement *T) {
       return T->getASTClass() == TypeDecorationClass;
     }
   };
+
   llvm::SmallVector<Decoration, 1> Decorations;
-  struct Qualifier {
-    Qualifier(AnnotatedToken *ColonColonTok, AnnotatedToken *NameTok,
-              ASTElement *Ref)
-        : ColonColon(ColonColonTok ? AnnotatedTokenRef(ColonColonTok, Ref)
-                                   : nullptr),
-          Name(NameTok, Ref) {}
-    AnnotatedTokenRef ColonColon, Name;
-  };
-  llvm::SmallVector<Qualifier, 1> QualifiedID;
+  QualifiedID Qualifier;
 
-  void addNameQualifier(AnnotatedToken *ColonColon, AnnotatedToken *Name) {
-    assert(Name);
-    QualifiedID.push_back(Qualifier(ColonColon, Name, this));
+  void addDecoration(Decoration Dec) {
+    auto *OldLoc = Decorations.empty() ? nullptr : &Decorations.front();
+    Decorations.push_back(Dec);
+    if (OldLoc != &Decorations.front())
+      for (auto &D : Decorations)
+        D.fix();
   }
 
-  void setName(AnnotatedToken *NameTok) {
-    QualifiedID.push_back(Qualifier(nullptr, NameTok, this));
+  void addNameQualifier(AnnotatedToken *NameTok) {
+    Qualifier.addNameQualifier(NameTok, this);
   }
-
+  void makeTemplateArgs() {
+    Qualifier.makeTemplateArgs();
+  }
+  void addTemplateSeparator(AnnotatedToken *ATok) {
+    Qualifier.addTemplateSeparator(ATok, this);
+  }
+  void addTemplateArgument(std::unique_ptr<Type> T) {
+    Qualifier.addTemplateArgument(std::move(T));
+  }
+  void addTemplateArgument(std::unique_ptr<Expr> E) {
+    Qualifier.addTemplateArgument(std::move(E));
+  }
   static bool classof(const ASTElement *T) {
     return T->getASTClass() == TypeClass;
   }
 
-  class TypeOrExpression {
-    ASTElement *Ptr;
-
-  public:
-    TypeOrExpression(std::unique_ptr<Type> T) : Ptr(T.release()) {}
-    TypeOrExpression(std::unique_ptr<Expr> E) : Ptr(E.release()) {}
-    TypeOrExpression(const TypeOrExpression &) = delete;
-    TypeOrExpression &operator=(const TypeOrExpression &) = delete;
-    TypeOrExpression(TypeOrExpression &&O) : Ptr(O.Ptr) { O.Ptr = nullptr; }
-    TypeOrExpression &operator=(TypeOrExpression &&O) {
-      std::swap(Ptr, O.Ptr);
-      return *this;
-    }
-
-    ~TypeOrExpression() {
-      if (Ptr) {
-        if (Type *T = dyn_cast<Type>(Ptr))
-          delete T;
-        else
-          delete cast<Expr>(Ptr);
-      }
-    }
-
-    bool isType() const {
-      assert(Ptr);
-      return isa<Type>(Ptr);
-    }
-    Type &asType() { return *cast<Type>(Ptr); }
-    Expr &asExpr() { return *cast<Expr>(Ptr); }
-  };
-
-  struct TemplateArguments {
-    llvm::SmallVector<TypeOrExpression, 2> Args;
-    llvm::SmallVector<AnnotatedTokenRef, 3> Separators;
-  };
-  llvm::Optional<std::shared_ptr<TemplateArguments> > TemplateArgs;
-
-  void makeTemplateArgs() {
-    TemplateArgs = std::make_shared<TemplateArguments>();
-  }
-  void addTemplateSeparator(AnnotatedToken *ATok) {
-    (*TemplateArgs)->Separators.push_back(AnnotatedTokenRef(ATok, this));
-  }
-  void addTemplateArgument(std::unique_ptr<Type> T) {
-    (*TemplateArgs)->Args.push_back(TypeOrExpression(std::move(T)));
-  }
-  void addTemplateArgument(std::unique_ptr<Expr> E) {
-    (*TemplateArgs)->Args.push_back(TypeOrExpression(std::move(E)));
-  }
-
-  std::unique_ptr<Type> cloneQualifiedID() {
+  std::unique_ptr<Type> cloneWithoutDecorations() {
     auto Clone = llvm::make_unique<Type>();
-    Clone->QualifiedID.reserve(QualifiedID.size());
-    for (auto &Q : QualifiedID) {
-      Clone->QualifiedID.push_back(
-          Qualifier(Q.ColonColon.get(), Q.Name.get(), Clone.get()));
-    }
-    if (TemplateArgs)
-      Clone->TemplateArgs = *TemplateArgs;
+    Clone->Qualifier = Qualifier;
+    Clone->Qualifier.reown(Clone.get());
     return Clone;
   }
 };
+
+inline QualifiedID::TypeOrExpression::TypeOrExpression(std::unique_ptr<Type> T)
+    : Ptr(T.release()) {}
+
+inline QualifiedID::TypeOrExpression::~TypeOrExpression() {
+  if (Ptr) {
+    if (Type *T = dyn_cast<Type>(Ptr))
+      delete T;
+    else
+      delete cast<Expr>(Ptr);
+  }
+}
 
 /// Initialization of a variable
 struct VarInitialization : ASTElement {
@@ -520,7 +562,7 @@ struct FunctionDecl : Stmt { // TODO: Not a real statement
 llvm::SmallVector<std::unique_ptr<Stmt>, 8> fuzzyparse(AnnotatedToken *first,
                                                        AnnotatedToken *last);
 
-void printAST(const Stmt &Root, const SourceManager &SourceMgr);
+void printAST(llvm::raw_ostream& OS, const Stmt &Root, const SourceManager &SourceMgr);
 
 } // end namespace fuzzy
 } // end namespace clang

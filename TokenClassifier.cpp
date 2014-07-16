@@ -73,7 +73,7 @@ TokenClass convertTokenKindToTokenClass(tok::TokenKind TK) {
 }
 
 void highlight(std::unique_ptr<llvm::MemoryBuffer> Source,
-               std::unique_ptr<OutputWriter> OW, ParserHints PH) {
+               std::unique_ptr<OutputWriter> OW, ParserHints PH, bool DumpAST) {
   using namespace llvm;
   using namespace clang;
 
@@ -121,9 +121,11 @@ void highlight(std::unique_ptr<llvm::MemoryBuffer> Source,
 
   auto x = fuzzy::fuzzyparse(&*AllTokens.begin(), &*AllTokens.end());
 
-  // print the AST to cerr for debugging purposes
-  for (auto &stmt : x)
-    fuzzy::printAST(*stmt, SourceMgr);
+  if (DumpAST) {
+    for (auto &stmt : x)
+      fuzzy::printAST(llvm::outs(), *stmt, SourceMgr);
+    return;
+  }
 
   bool PPMode = false;
   TokenClass Class = TokenClass::Other;

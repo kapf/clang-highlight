@@ -46,7 +46,8 @@ public:
     ATok->setASTReference(AstRef);
   }
   AnnotatedTokenRef(nullptr_t = nullptr) : ATok(nullptr) {}
-  AnnotatedTokenRef(const AnnotatedTokenRef &) = delete;
+  // AnnotatedTokenRef(const AnnotatedTokenRef &) = delete;
+  AnnotatedTokenRef(const AnnotatedTokenRef &) = default;
   AnnotatedTokenRef(AnnotatedTokenRef &&) = default;
 
   AnnotatedTokenRef(AnnotatedTokenRef const &o, ASTElement *AstRef)
@@ -55,7 +56,8 @@ public:
       ATok->setASTReference(AstRef);
   }
 
-  AnnotatedTokenRef &operator=(const AnnotatedTokenRef &) = delete;
+  // AnnotatedTokenRef &operator=(const AnnotatedTokenRef &) = delete;
+  AnnotatedTokenRef &operator=(const AnnotatedTokenRef &) = default;
   AnnotatedTokenRef &operator=(AnnotatedTokenRef &&) = default;
 
   operator bool() const { return ATok; }

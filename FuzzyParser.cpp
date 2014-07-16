@@ -75,6 +75,9 @@ static std::unique_ptr<Expr> parseExpression(TokenFilter &TF,
                                              int Precedence = 1,
                                              bool StopAtGreater = false);
 
+static std::unique_ptr<Type> parseType(TokenFilter &TF,
+                                       bool WithDecorations = true);
+
 static std::unique_ptr<Expr> parseUnaryOperator(TokenFilter &TF) {
   assert(TF.peek() && "can't parse empty expression");
 
@@ -121,6 +124,49 @@ static bool isLiteralOrConstant(tok::TokenKind K) {
   }
 }
 
+template <typename QualOwner>
+static bool parseQualifiedID(TokenFilter &TF, QualOwner& Qual) {
+  auto Guard = TF.guard();
+
+  bool GlobalNamespaceColon = true;
+  do {
+    if (checkKind(TF, tok::coloncolon))
+      Qual.addNameQualifier(TF.next());
+    else if (!GlobalNamespaceColon)
+      return {};
+    GlobalNamespaceColon = false;
+    if (!checkKind(TF, tok::identifier))
+      return {};
+    Qual.addNameQualifier(TF.next());
+  } while (checkKind(TF, tok::coloncolon));
+
+  if (checkKind(TF, tok::less)) {
+    Qual.makeTemplateArgs();
+    bool isFirst = true;
+    do {
+      Qual.addTemplateSeparator(TF.next());
+
+      if (isFirst && checkKind(TF, tok::greater))
+        break;
+      isFirst = false;
+
+      if (auto Arg = parseType(TF))
+        Qual.addTemplateArgument(std::move(Arg));
+      else if (auto E =
+                   parseExpression(TF, prec::Comma + 1, /*StopAtGreater=*/true))
+        Qual.addTemplateArgument(std::move(E));
+      else
+        return false;
+    } while (checkKind(TF, tok::comma));
+    if (!checkKind(TF, tok::greater))
+      return false;
+    Qual.addTemplateSeparator(TF.next());
+  }
+
+  Guard.dismiss();
+  return true;
+}
+
 static std::unique_ptr<Expr> parseExpression(TokenFilter &TF, int Precedence,
                                              bool StopAtGreater) {
   assert(TF.peek() && "can't parse empty expression");
@@ -133,9 +179,9 @@ static std::unique_ptr<Expr> parseExpression(TokenFilter &TF, int Precedence,
       return llvm::make_unique<LiteralConstant>(TF.next());
 
     if (checkKind(TF, tok::identifier) || checkKind(TF, tok::coloncolon)) {
-      auto DR = llvm::make_unique<DeclRefExpr>(TF.next());
-      while (checkKind(TF, tok::identifier) || checkKind(TF, tok::coloncolon))
-        DR->addQualifier(TF.next());
+      auto DR = llvm::make_unique<DeclRefExpr>();
+      if (!parseQualifiedID(TF, *DR))
+        return {};
       if (checkKind(TF, tok::l_paren))
         return parseCallExpr(TF, std::move(DR));
       return std::move(DR);
@@ -233,52 +279,17 @@ static bool isBuiltinType(tok::TokenKind K) {
 }
 
 static std::unique_ptr<Type> parseType(TokenFilter &TF,
-                                       bool WithDecorations = true) {
+                                       bool WithDecorations) {
   auto Guard = TF.guard();
   std::unique_ptr<Type> T = llvm::make_unique<Type>();
 
   if (checkKind(TF, tok::kw_auto)) {
-    T->addNameQualifier(nullptr, TF.next());
+    T->addNameQualifier(TF.next());
   } else if (TF.peek() && isBuiltinType(TF.peek()->Tok.getKind())) {
     while (TF.peek() && isBuiltinType(TF.peek()->Tok.getKind()))
-      T->addNameQualifier(nullptr, TF.next());
-  } else {
-    bool GlobalNamespaceColon = true;
-    do {
-      AnnotatedToken *ColCol = nullptr;
-      if (checkKind(TF, tok::coloncolon))
-        ColCol = TF.next();
-      else if (!GlobalNamespaceColon)
-        return {};
-      GlobalNamespaceColon = false;
-      if (!checkKind(TF, tok::identifier))
-        return {};
-      T->addNameQualifier(ColCol, TF.next());
-    } while (checkKind(TF, tok::coloncolon));
-  }
-
-  if (checkKind(TF, tok::less)) {
-    T->makeTemplateArgs();
-    assert(T->TemplateArgs);
-    bool isFirst = true;
-    do {
-      T->addTemplateSeparator(TF.next());
-
-      if (isFirst && checkKind(TF, tok::greater))
-        break;
-      isFirst = false;
-
-      if (auto Arg = parseType(TF))
-        T->addTemplateArgument(std::move(Arg));
-      else if (auto E =
-                   parseExpression(TF, prec::Comma + 1, /*StopAtGreater=*/true))
-        T->addTemplateArgument(std::move(E));
-      else
-        return {};
-    } while (checkKind(TF, tok::comma));
-    if (!checkKind(TF, tok::greater))
-      return {};
-    T->addTemplateSeparator(TF.next());
+      T->addNameQualifier(TF.next());
+  } else if (!parseQualifiedID(TF, *T)) {
+    return {};
   }
 
   if (WithDecorations)
@@ -302,7 +313,7 @@ parseVarDecl(TokenFilter &TF, Type *TypeName = 0, bool NameOptional = false) {
     TypeName = TypeName2.get();
   }
 
-  D.VariableType = TypeName->cloneQualifiedID();
+  D.VariableType = TypeName->cloneWithoutDecorations();
   parseTypeDecorations(TF, *D.VariableType);
 
   if (checkKind(TF, tok::identifier)) {

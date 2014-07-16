@@ -37,7 +37,8 @@ struct ParserHints {
 ParserHints collectParserHints(llvm::StringRef SourceFile);
 void highlight(std::unique_ptr<llvm::MemoryBuffer> Source,
                std::unique_ptr<OutputWriter> OW,
-               ParserHints Hints = ParserHints());
+               ParserHints Hints = ParserHints(),
+               bool DumpAST=false);
 
 } // end namespace highlight
 } // end namespace clang

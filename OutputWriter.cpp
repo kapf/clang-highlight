@@ -96,7 +96,7 @@ class HtmlWriter : public OutputWriter {
 
 public:
   HtmlWriter(raw_ostream &OS) : OS(OS) {
-    OS << R"(<p style=" white - space : pre "><tt>)";
+    OS << "<p style=\"white-space:pre\"><tt>";
   }
   ~HtmlWriter() { OS << "</tt></p>"; }
 

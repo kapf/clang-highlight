@@ -35,6 +35,11 @@ UseParser("use-parser",
           cl::desc("Use the clang parser to highlight the source file."),
           cl::cat(ClangHighlightCategory));
 
+static cl::opt<bool>
+DumpAST("dump-ast",
+          cl::desc("Print the fuzzy AST."),
+          cl::cat(ClangHighlightCategory));
+
 static cl::opt<OutputFormat> OutputFormatFlag(
     cl::desc("Output format for the highlighted code."),
     cl::values(clEnumValN(OutputFormat::StdoutColored, "stdout",
@@ -53,7 +58,7 @@ static void PrintVersion() {
 }
 
 static bool parserHighlight(StringRef File, OutputFormat Format,
-                            bool UseParser) {
+                            bool UseParser, bool DumpAST) {
   ParserHints Hints = UseParser ? collectParserHints(File) : ParserHints(File);
 
   auto Source = llvm::MemoryBuffer::getFileOrSTDIN(File);
@@ -62,7 +67,7 @@ static bool parserHighlight(StringRef File, OutputFormat Format,
     return true;
   }
 
-  highlight(std::move(*Source), makeOutputWriter(Format), Hints);
+  highlight(std::move(*Source), makeOutputWriter(Format), Hints, DumpAST);
   return false;
 }
 
@@ -86,7 +91,7 @@ int main(int argc, const char **argv) {
 
   bool Error = false;
 
-  Error |= parserHighlight(FileName, OutputFormatFlag, UseParser);
+  Error |= parserHighlight(FileName, OutputFormatFlag, UseParser, DumpAST);
 
   return Error ? 1 : 0;
 }

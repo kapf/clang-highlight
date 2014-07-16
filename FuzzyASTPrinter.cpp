@@ -39,28 +39,32 @@ struct ASTPrinter {
   void print(Indented Indent, const VarDecl &DCL);
   void print(Indented Indent, const Expr &EXP);
   void print(Indented Indent, const Stmt &stmt);
+  void print(Indented Indent, const QualifiedID& Qual);
 };
 } // end anonymous namespace
+
+void ASTPrinter::print(Indented Indent, const QualifiedID& Qual) {
+  for (auto &N : Qual.NameSegments) {
+    OS << N->getText(SourceMgr);
+  }
+  if (Qual.TemplateArgs) {
+    OS << "\n" << Indent << "<\n";
+    for (auto &A : (*Qual.TemplateArgs)->Args) {
+      if (A.isType())
+        print(Indent.next(), A.asType());
+      else
+        print(Indent.next(), A.asExpr());
+    }
+    OS << Indent << '>';
+  }
+}
 
 void ASTPrinter::print(Indented Indent, const Type &T) {
   OS << Indent << "Type ";
   for (auto &D : T.Decorations)
     OS << '\'' << D.Tok->getText(SourceMgr) << "' ";
   OS << '\'';
-  for (auto &ID : T.QualifiedID) {
-    if (ID.ColonColon)
-      OS << ID.ColonColon->getText(SourceMgr);
-    OS << ID.Name->getText(SourceMgr);
-  }
-  if (T.TemplateArgs) {
-    OS << '\n' << Indent.next() << "<\n";
-    for (auto &A : (*T.TemplateArgs)->Args)
-      if (A.isType())
-        print(Indent.next().next(), A.asType());
-      else
-        print(Indent.next().next(), A.asExpr());
-    OS << '\n' << Indent.next() << '>';
-  }
+  print(Indent.next(), T.Qualifier);
   OS << "'\n";
 }
 
@@ -84,16 +88,14 @@ void ASTPrinter::print(Indented Indent, const Expr &EXP) {
        << '\n';
     print(Indent.next(), *BinOp->getRHS());
   } else if (auto *Decl = llvm::dyn_cast<DeclRefExpr>(&EXP)) {
-    OS << Indent;
-    for (auto &T : Decl->Toks)
-      OS << T->getText(SourceMgr) << ' ';
-    OS << '\n';
+    OS << Indent << "DeclRefExpr '";
+    print(Indent.next(), Decl->Qualifier);
+    OS << "'\n";
   } else if (auto *Lit = llvm::dyn_cast<LiteralConstant>(&EXP)) {
     OS << Indent << Lit->Tok->getText(SourceMgr) << '\n';
   } else if (auto *Call = llvm::dyn_cast<CallExpr>(&EXP)) {
     OS << Indent << "call expr '";
-    for (auto &T : Call->FunctionName->Toks)
-      OS << T->getText(SourceMgr) << ' ';
+    print(Indent.next(), Call->FunctionName->Qualifier);
     OS << "'\n";
     for (auto &Arg : Call->Args)
       print(Indent.next(), *Arg);
@@ -130,8 +132,8 @@ void ASTPrinter::print(Indented Indent, const Stmt &stmt) {
   }
 }
 
-void printAST(const Stmt &Root, const SourceManager &SourceMgr) {
-  ASTPrinter AP{ SourceMgr, llvm::dbgs() };
+void printAST(llvm::raw_ostream& OS, const Stmt &Root, const SourceManager &SourceMgr) {
+  ASTPrinter AP{ SourceMgr, OS };
   AP.print(Indented(0), Root);
 }
 
