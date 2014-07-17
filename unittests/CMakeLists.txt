@@ -2,6 +2,8 @@ set(LLVM_LINK_COMPONENTS
   Support
   )
 
+include_directories("..")
+
 add_highlight_unittest(FuzzyParseTests
   FuzzyParseTest.cpp
   )

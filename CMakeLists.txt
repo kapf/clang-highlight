@@ -14,6 +14,7 @@ target_link_libraries(clang-highlight
   clangAST
   clangFuzzy
   )
+include_directories("Fuzzy")
 
 install(TARGETS clang-highlight RUNTIME DESTINATION bin)
 
@@ -24,5 +25,5 @@ function(add_highlight_unittest test_dirname)
   add_unittest(ClangHighlightUnitTests ${test_dirname} ${ARGN})
 endfunction()
 
-add_subdirectory(fuzzy)
+add_subdirectory(Fuzzy)
 add_subdirectory(unittests)

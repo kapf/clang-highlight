@@ -17,7 +17,7 @@
 #include "OutputWriter.h"
 #include <unordered_set>
 #include "TokenClassifier.h"
-#include "fuzzy/FuzzyAST.h"
+#include "Fuzzy/FuzzyAST.h"
 
 using namespace clang;
 

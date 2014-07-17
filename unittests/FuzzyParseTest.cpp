@@ -16,7 +16,7 @@
 #include "clang/Basic/SourceManager.h"
 #include "llvm/Config/config.h"
 #include "gtest/gtest.h"
-#include "../fuzzy/FuzzyAST.h"
+#include "Fuzzy/FuzzyAST.h"
 
 #define DEBUG_TYPE "highlight-test"
 
