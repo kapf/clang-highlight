@@ -550,7 +550,7 @@ struct FunctionDecl : Stmt { // TODO: Not a real statement
   void setRightParen(AnnotatedToken *Tok) { setRef(LEFT, Tok); }
   void setStatic(AnnotatedToken *Tok) { setRef(STATIC, Tok); }
   void setName(AnnotatedToken *Tok) { setRef(NAME, Tok); }
-  void setSemicolon(AnnotatedToken *Tok) { setRef(SEMI, Tok); }
+  void setSemi(AnnotatedToken *Tok) { setRef(SEMI, Tok); }
 
   std::unique_ptr<CompoundStmt> Body;
 

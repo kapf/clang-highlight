@@ -54,48 +54,56 @@ LangOptions getFormattingLangOpts(bool Cpp03 = false) {
 
 class FuzzyParseTest : public ::testing::Test {
 protected:
+  struct ParseResult {
+    llvm::SmallVector<std::unique_ptr<fuzzy::Stmt>, 8> ASTStmts;
+    std::vector<AnnotatedToken> Tokens;
+    static constexpr const char *FileName = "";
+    FileManager Files;
+    DiagnosticsEngine Diagnostics;
+    SourceManager SourceMgr;
+    FileID ID;
+    Lexer Lex;
+    IdentifierTable IdentTable;
+
+    ParseResult(StringRef Code)
+        : Files((FileSystemOptions())),
+          Diagnostics(IntrusiveRefCntPtr<DiagnosticIDs>(new DiagnosticIDs),
+                      new DiagnosticOptions),
+          SourceMgr(Diagnostics, Files),
+          ID(SourceMgr.createFileID(
+              llvm::MemoryBuffer::getMemBuffer(Code, FileName))),
+          Lex(ID, SourceMgr.getBuffer(ID), SourceMgr, getFormattingLangOpts()),
+          IdentTable(getFormattingLangOpts()) {
+      Lex.SetKeepWhitespaceMode(true);
+
+      for (;;) {
+        Token TmpTok;
+        Lex.LexFromRawLexer(TmpTok);
+        Tokens.push_back(fuzzy::AnnotatedToken(TmpTok));
+        Token &ThisTok = Tokens.back().Tok;
+
+        StringRef TokenText(SourceMgr.getCharacterData(ThisTok.getLocation()),
+                            ThisTok.getLength());
+
+        if (ThisTok.is(tok::raw_identifier)) {
+          IdentifierInfo &Info = IdentTable.get(TokenText);
+          ThisTok.setIdentifierInfo(&Info);
+          ThisTok.setKind(Info.getTokenID());
+        }
+        Tokens.back().Text = Tokens.back().getText(SourceMgr);
+
+        if (ThisTok.is(tok::eof))
+          break;
+      }
+
+      ASTStmts = fuzzy::fuzzyparse(&*Tokens.begin(), &*Tokens.end());
+    }
+  };
+
   void checkParse(StringRef Code,
                   llvm::SmallVector<ClassOfTester, 8> TokenTypes) {
-    using namespace llvm;
-    using namespace clang;
-
-    StringRef FileName = "";
-    FileManager Files((FileSystemOptions()));
-    DiagnosticsEngine Diagnostics(
-        IntrusiveRefCntPtr<DiagnosticIDs>(new DiagnosticIDs),
-        new DiagnosticOptions);
-    SourceManager SourceMgr(Diagnostics, Files);
-    llvm::MemoryBuffer *Buf = llvm::MemoryBuffer::getMemBuffer(Code, FileName);
-    FileID ID = SourceMgr.createFileID(Buf);
-    auto Langs = getFormattingLangOpts();
-    Lexer Lex(ID, SourceMgr.getBuffer(ID), SourceMgr, Langs);
-    Lex.SetKeepWhitespaceMode(true);
-
-    IdentifierTable IdentTable(getFormattingLangOpts());
-
-    std::vector<fuzzy::AnnotatedToken> AllTokens;
-
-    for (;;) {
-      Token TmpTok;
-      Lex.LexFromRawLexer(TmpTok);
-      AllTokens.push_back(fuzzy::AnnotatedToken(TmpTok));
-      Token &ThisTok = AllTokens.back().Tok;
-
-      StringRef TokenText(SourceMgr.getCharacterData(ThisTok.getLocation()),
-                          ThisTok.getLength());
-
-      if (ThisTok.is(tok::raw_identifier)) {
-        IdentifierInfo &Info = IdentTable.get(TokenText);
-        ThisTok.setIdentifierInfo(&Info);
-        ThisTok.setKind(Info.getTokenID());
-      }
-      AllTokens.back().Text = AllTokens.back().getText(SourceMgr);
-
-      if (ThisTok.is(tok::eof))
-        break;
-    }
-
-    auto x = fuzzy::fuzzyparse(&*AllTokens.begin(), &*AllTokens.end());
+    ParseResult Parsed(Code);
+    auto &AllTokens = Parsed.Tokens;
 
     size_t NonWhitespaceTokens = 0;
     for (auto &Tok : AllTokens)
@@ -111,15 +119,52 @@ protected:
         ++J;
       if (!TokenTypes[I].verify(AllTokens[J].ASTReference)) {
         llvm::dbgs() << "Parsed " << Code << " into:\n";
-        for (auto &E : x)
-          printAST(llvm::dbgs(), *E, SourceMgr);
-        ASSERT_TRUE(TokenTypes[I].verify(AllTokens[J].ASTReference));
+        for (auto &S : Parsed.ASTStmts)
+          printAST(llvm::dbgs(), *S, Parsed.SourceMgr);
+        llvm::dbgs() << "I=" << I << ", J=" << J << '\n';
+        EXPECT_TRUE(TokenTypes[I].verify(AllTokens[J].ASTReference));
       }
     }
   }
+
+  void checkUnparsable(StringRef Code) {
+    ParseResult Parsed(Code);
+    for (auto &Tok : Parsed.Tokens)
+      if (Tok.Tok.getKind() != tok::comment &&
+          Tok.Tok.getKind() != tok::unknown && Tok.Tok.getKind() != tok::eof)
+        EXPECT_TRUE(llvm::isa<UnparsableBlock>(Tok.ASTReference));
+  }
+
+  template <typename T> void checkToplevel(StringRef Code) {
+    ParseResult Parsed(Code);
+    if (Parsed.ASTStmts.size() != 1 ||
+        !llvm::isa<T>(Parsed.ASTStmts[0].get())) {
+      llvm::dbgs() << Code << '\n';
+
+      llvm::dbgs() << "Parsed " << Code << " into:\n";
+      for (auto &S : Parsed.ASTStmts)
+        printAST(llvm::dbgs(), *S, Parsed.SourceMgr);
+    }
+    EXPECT_EQ(Parsed.ASTStmts.size(), size_t(1));
+    EXPECT_TRUE(llvm::isa<T>(Parsed.ASTStmts[0].get()));
+  }
+
+  template <typename T> void checkFirst(StringRef Code) {
+    ParseResult Parsed(Code);
+    if (Parsed.ASTStmts.size() == 0 ||
+        !llvm::isa<T>(Parsed.ASTStmts[0].get())) {
+      llvm::dbgs() << Code << '\n';
+
+      llvm::dbgs() << "Parsed " << Code << " into:\n";
+      for (auto &S : Parsed.ASTStmts)
+        printAST(llvm::dbgs(), *S, Parsed.SourceMgr);
+    }
+    EXPECT_TRUE(Parsed.ASTStmts.size() > 0);
+    EXPECT_TRUE(llvm::isa<T>(Parsed.ASTStmts[0].get()));
+  }
 };
 
-TEST_F(FuzzyParseTest, AssignmentTest) {
+TEST_F(FuzzyParseTest, DeclStmtTest) {
   checkParse("int i;", checkTypeSeq<Type, VarDecl, DeclStmt>());
   checkParse("int i=5;", checkTypeSeq<Type, VarDecl, VarInitialization,
                                       LiteralConstant, DeclStmt>());
@@ -136,9 +181,124 @@ TEST_F(FuzzyParseTest, AssignmentTest) {
                    DeclStmt, VarDecl, DeclStmt, VarDecl, DeclStmt, VarDecl,
                    DeclStmt, VarDecl, DeclStmt, VarDecl, DeclStmt>());
 
-  checkParse("int 1=2;",
-             checkTypeSeq<UnparsableBlock, UnparsableBlock, UnparsableBlock,
-                          UnparsableBlock, UnparsableBlock>());
+  checkParse("int *p;",
+             checkTypeSeq<Type, Type::Decoration, VarDecl, DeclStmt>());
+  checkParse("type &p;",
+             checkTypeSeq<Type, Type::Decoration, VarDecl, DeclStmt>());
+
+  checkParse(
+      "int* p,* /*comment*/  **  *  *   q;",
+      checkTypeSeq<Type, Type::Decoration, VarDecl, DeclStmt, Type::Decoration,
+                   Type::Decoration, Type::Decoration, Type::Decoration,
+                   Type::Decoration, VarDecl, DeclStmt>());
+
+  checkParse(
+      "a b=c,*d=e,********f=****g**h;",
+      checkTypeSeq<Type, VarDecl, VarInitialization, DeclRefExpr, DeclStmt,
+                   Type::Decoration, VarDecl, VarInitialization, DeclRefExpr,
+                   DeclStmt, Type::Decoration, Type::Decoration,
+                   Type::Decoration, Type::Decoration, Type::Decoration,
+                   Type::Decoration, Type::Decoration, Type::Decoration,
+                   VarDecl, VarInitialization, UnaryOperator, UnaryOperator,
+                   UnaryOperator, UnaryOperator, DeclRefExpr, BinaryOperator,
+                   UnaryOperator, DeclRefExpr, DeclStmt>());
+
+  checkToplevel<DeclStmt>("a b;");
+  checkToplevel<DeclStmt>("a b=c(d,e);");
+  checkToplevel<DeclStmt>("a b=c(d,e,*g),*h=*i;");
+
+  checkToplevel<DeclStmt>("int a;");
+  checkToplevel<DeclStmt>("unsigned long long int a;");
+  checkToplevel<DeclStmt>("signed char a;");
+  checkToplevel<DeclStmt>("double a;");
+
+  checkUnparsable("int 1=2;");
+}
+
+TEST_F(FuzzyParseTest, ExprLineStmtTest) {
+  checkToplevel<ExprLineStmt>("a*b*c;");
+  checkToplevel<ExprLineStmt>("a*b*c=d;");
+  checkToplevel<ExprLineStmt>("a*b*c==d;");
+  checkToplevel<ExprLineStmt>("f();");
+  checkToplevel<ExprLineStmt>("f(a,b,c);");
+  checkToplevel<ExprLineStmt>("f(1,2,3);");
+  checkUnparsable("1(a,b);");
+  checkToplevel<ExprLineStmt>("f(1)*g;");
+  checkToplevel<ExprLineStmt>("n::f(1)*g;");
+  checkToplevel<ExprLineStmt>("a+b;");
+  checkToplevel<ExprLineStmt>("a-b;");
+  checkToplevel<ExprLineStmt>("a*b*c;");
+  checkToplevel<ExprLineStmt>("a/b;");
+  checkToplevel<ExprLineStmt>("a&b&c;");
+  checkToplevel<ExprLineStmt>("a^b;");
+  checkToplevel<ExprLineStmt>("a|b;");
+  checkToplevel<ExprLineStmt>("a<<b;");
+  checkToplevel<ExprLineStmt>("a>>b;");
+  // checkToplevel<ExprLineStmt>("a<b;");
+  checkToplevel<ExprLineStmt>("a>b;");
+  checkToplevel<ExprLineStmt>("~a;");
+  checkToplevel<ExprLineStmt>("!a;");
+  checkToplevel<ExprLineStmt>("-a;");
+  checkToplevel<ExprLineStmt>("--a;");
+  checkToplevel<ExprLineStmt>("++a;");
+  checkToplevel<ExprLineStmt>("++++~~~+~!~++++++!--++++++a;");
+  checkToplevel<ExprLineStmt>("\"string literal\";");
+  checkToplevel<ExprLineStmt>("nullptr;");
+  checkToplevel<ExprLineStmt>("true;");
+  checkToplevel<ExprLineStmt>("false;");
+  checkToplevel<ExprLineStmt>("-1;");
+}
+
+TEST_F(FuzzyParseTest, QualifiedIDs) {
+  checkToplevel<DeclStmt>("std::vector<int> v;");
+  checkToplevel<DeclStmt>("::std::vector v1;");
+  checkToplevel<DeclStmt>("std::vector<int> v2;");
+  checkToplevel<DeclStmt>("std::vector<int,int> v3;");
+  checkToplevel<DeclStmt>("std::vector<> v4;");
+  checkToplevel<DeclStmt>("std::vector<1> v5;");
+  checkToplevel<DeclStmt>("std::tr1::stl::vector<> v6;");
+  checkToplevel<DeclStmt>("::vector<> v7;");
+  checkToplevel<DeclStmt>(
+      "::std::tr1::stl::vector<std::vector<int>, ::std::pair<int,int> > v8;");
+  checkToplevel<DeclStmt>("n::n::n::n::n::a<n::b<c<d<n::n::e,f>,g<h> > > > g;");
+  checkToplevel<DeclStmt>("a::b<c::d> ***e=f::g<1>*h::i<2,j>(::k::l);");
+  checkToplevel<DeclStmt>("auto x = llvm::make_unique<int>(0);");
+  checkParse(
+      "auto x = llvm::make_unique<int>(0);",
+      checkTypeSeq<Type, VarDecl, VarInitialization, DeclRefExpr, DeclRefExpr,
+                   DeclRefExpr, DeclRefExpr, Type, DeclRefExpr, CallExpr,
+                   LiteralConstant, CallExpr, DeclStmt>());
+  checkToplevel<ExprLineStmt>("n::f(a::b<x>());");
+  checkToplevel<ExprLineStmt>("n::f<a,1,2>(a::b<2*3>());");
+  // checkToplevel<ExprLineStmt>("t<1+b>()");
+  // checkToplevel<ExprLineStmt>("t< (1<<2) >()");
+  // checkToplevel<ExprLineStmt>("t< (1>2) >()");
+  checkUnparsable("t<1> 2>()");
+}
+
+TEST_F(FuzzyParseTest, FunctionDeclStmt) {
+  const char *Tests[] = {
+    "void f(int,int);", "void g(int i=0);",
+    "static std::unique_ptr<VarDecl> parseVarDecl(TokenFilter &TF,"
+    "                                             Type *TypeName = 0,"
+    "                                             bool NameOptional = false);",
+    "void dismiss() { TF = nullptr; }", "type func1();",
+    "type func2() { 1+1; }", "type func3(type a) { 1+1; }",
+    "type func4(type a, type b) { 1+1; }", "static type func5();",
+    "static std::unique_ptr<Expr> parseExpression(TokenFilter &TF,"
+    "                                             int Precedence,"
+    "                                             bool StopAtGreater);",
+    "static bool checkKind(TokenFilter &TF, tok::TokenKind Kind){}",
+  };
+  for (const char *Code : Tests)
+    checkFirst<FunctionDecl>(Code);
+}
+
+TEST_F(FuzzyParseTest, ReturnStmt) {
+  checkToplevel<ReturnStmt>("return 1;");
+  checkToplevel<ReturnStmt>("return a*b;");
+  checkUnparsable("return return;");
+  checkToplevel<ReturnStmt>("return;");
 }
 
 } // end namespace fuzzy

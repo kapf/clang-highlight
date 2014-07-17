@@ -25,7 +25,7 @@ struct TokenFilter {
     while (First != Last && (First->Tok.getKind() == tok::unknown ||
                              First->Tok.getKind() == tok::comment))
       ++First;
-    if (First == Last)
+    if (First == Last || First->Tok.getKind() == tok::eof)
       First = Last = 0;
     assert(Ret->Tok.getKind() != tok::raw_identifier);
     return Ret;
@@ -81,7 +81,10 @@ static std::unique_ptr<Type> parseType(TokenFilter &TF,
 static std::unique_ptr<Expr> parseUnaryOperator(TokenFilter &TF) {
   assert(TF.peek() && "can't parse empty expression");
 
-  if (checkKind(TF, tok::star)) {
+  if (checkKind(TF, tok::plus) || checkKind(TF, tok::minus) ||
+      checkKind(TF, tok::exclaim) || checkKind(TF, tok::tilde) ||
+      checkKind(TF, tok::star) || checkKind(TF, tok::amp) ||
+      checkKind(TF, tok::plusplus) || checkKind(TF, tok::minusminus)) {
     AnnotatedToken *Op = TF.next();
     return llvm::make_unique<UnaryOperator>(Op, parseUnaryOperator(TF));
   }
@@ -125,7 +128,7 @@ static bool isLiteralOrConstant(tok::TokenKind K) {
 }
 
 template <typename QualOwner>
-static bool parseQualifiedID(TokenFilter &TF, QualOwner& Qual) {
+static bool parseQualifiedID(TokenFilter &TF, QualOwner &Qual) {
   auto Guard = TF.guard();
 
   bool GlobalNamespaceColon = true;
@@ -277,8 +280,7 @@ static bool isBuiltinType(tok::TokenKind K) {
   }
 }
 
-static std::unique_ptr<Type> parseType(TokenFilter &TF,
-                                       bool WithDecorations) {
+static std::unique_ptr<Type> parseType(TokenFilter &TF, bool WithDecorations) {
   auto Guard = TF.guard();
   std::unique_ptr<Type> T = llvm::make_unique<Type>();
 
@@ -361,7 +363,7 @@ static std::unique_ptr<Stmt> parseDeclStmt(TokenFilter &TF) {
       return {};
   }
 
-  return nullptr;
+  return {};
 }
 
 static std::unique_ptr<FunctionDecl> parseFunctionStmt(TokenFilter &TF) {
@@ -391,12 +393,14 @@ static std::unique_ptr<FunctionDecl> parseFunctionStmt(TokenFilter &TF) {
     else
       break;
   }
-  if (checkKind(TF, tok::r_paren)) {
-    Guard.dismiss();
-    F->setRightParen(TF.next());
-    return std::move(F);
-  }
-  return {};
+  if (!checkKind(TF, tok::r_paren))
+    return {};
+
+  F->setRightParen(TF.next());
+  if (checkKind(TF, tok::semi))
+    F->setSemi(TF.next());
+  Guard.dismiss();
+  return std::move(F);
 }
 
 static std::unique_ptr<Stmt> skipUnparsable(TokenFilter &TF) {
