@@ -40,8 +40,16 @@ struct ASTPrinter {
   void print(Indented Indent, const Expr &EXP);
   void print(Indented Indent, const Stmt &stmt);
   void print(Indented Indent, const QualifiedID& Qual);
+  void printScope(Indented Indent, const Scope& Sc);
 };
 } // end anonymous namespace
+
+void ASTPrinter::printScope(Indented Indent, const Scope& Sc) {
+  OS << "{\n";
+  for (auto &S : Sc.children())
+    print(Indent.next(), S);
+  OS << Indent << "}\n";  
+}
 
 void ASTPrinter::print(Indented Indent, const QualifiedID& Qual) {
   for (auto &N : Qual.NameSegments) {
@@ -114,7 +122,9 @@ void ASTPrinter::print(Indented Indent, const Stmt &stmt) {
       print(Indent.next(), *VD);
   } else if (auto *UB = llvm::dyn_cast<UnparsableBlock>(&stmt)) {
     (void)UB;
-    OS << Indent << "<Unparsable Block>\n";
+    OS << Indent << "Unparsable Block:\n";
+    for (auto T : UB->Body)
+      OS << Indent.next() << T->getText(SourceMgr) << '\n';
   } else if (auto *ELS = llvm::dyn_cast<ExprLineStmt>(&stmt)) {
     OS << Indent << "ExprLineStmt\n";
     print(Indent.next(), *ELS->Body);
@@ -127,6 +137,23 @@ void ASTPrinter::print(Indented Indent, const Stmt &stmt) {
   } else if (auto *FD = llvm::dyn_cast<FunctionDecl>(&stmt)) {
     (void)FD;
     OS << Indent << "FunctionDecl\n";
+  } else if (auto *CD = llvm::dyn_cast<ClassDecl>(&stmt)) {
+    OS << Indent << '\'' << CD->Refs[ClassDecl::CLASS]->getText(SourceMgr)
+       << "' ";
+    print(Indent.next(), *CD->Name);
+    if (!CD->BaseClasses.empty()) {
+      OS << " derived from\n";
+      for (auto& BC : CD->BaseClasses) {
+        OS << Indent.next() << (BC.Accessibility ? BC.Accessibility->getText(SourceMgr) : "<default accessibility>") << ' ';
+        print(Indent.next().next(), *BC.T);
+      }
+    }
+    if (!CD->hasScope())
+      OS << " (declaration only)\n";
+    else
+      printScope(Indent, *CD);
+  } else if (auto *LBL = llvm::dyn_cast<LabelStmt>(&stmt)) {
+    OS << Indent << "Label '" << LBL->LabelName->getText(SourceMgr) << "'\n";
   } else {
     llvm_unreachable("TODO: unhandled fuzzy ast node");
   }

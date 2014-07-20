@@ -55,7 +55,7 @@ LangOptions getFormattingLangOpts(bool Cpp03 = false) {
 class FuzzyParseTest : public ::testing::Test {
 protected:
   struct ParseResult {
-    llvm::SmallVector<std::unique_ptr<fuzzy::Stmt>, 8> ASTStmts;
+    TranslationUnit TU;
     std::vector<AnnotatedToken> Tokens;
     static constexpr const char *FileName = "";
     FileManager Files;
@@ -96,7 +96,7 @@ protected:
           break;
       }
 
-      ASTStmts = fuzzy::fuzzyparse(&*Tokens.begin(), &*Tokens.end());
+      TU = fuzzy::fuzzyparse(&*Tokens.begin(), &*Tokens.end());
     }
   };
 
@@ -119,8 +119,8 @@ protected:
         ++J;
       if (!TokenTypes[I].verify(AllTokens[J].ASTReference)) {
         llvm::dbgs() << "Parsed " << Code << " into:\n";
-        for (auto &S : Parsed.ASTStmts)
-          printAST(llvm::dbgs(), *S, Parsed.SourceMgr);
+        for (auto &S : Parsed.TU.children())
+          printAST(llvm::dbgs(), S, Parsed.SourceMgr);
         llvm::dbgs() << "I=" << I << ", J=" << J << '\n';
         EXPECT_TRUE(TokenTypes[I].verify(AllTokens[J].ASTReference));
       }
@@ -137,30 +137,30 @@ protected:
 
   template <typename T> void checkToplevel(StringRef Code) {
     ParseResult Parsed(Code);
-    if (Parsed.ASTStmts.size() != 1 ||
-        !llvm::isa<T>(Parsed.ASTStmts[0].get())) {
+    if (Parsed.TU.children().size() != 1 ||
+        !llvm::isa<T>(Parsed.TU.Body[0].get())) {
       llvm::dbgs() << Code << '\n';
 
       llvm::dbgs() << "Parsed " << Code << " into:\n";
-      for (auto &S : Parsed.ASTStmts)
-        printAST(llvm::dbgs(), *S, Parsed.SourceMgr);
+      for (auto &S : Parsed.TU.children())
+        printAST(llvm::dbgs(), S, Parsed.SourceMgr);
     }
-    EXPECT_EQ(Parsed.ASTStmts.size(), size_t(1));
-    EXPECT_TRUE(llvm::isa<T>(Parsed.ASTStmts[0].get()));
+    EXPECT_EQ(Parsed.TU.children().size(), size_t(1));
+    EXPECT_TRUE(llvm::isa<T>(Parsed.TU.Body[0].get()));
   }
 
   template <typename T> void checkFirst(StringRef Code) {
     ParseResult Parsed(Code);
-    if (Parsed.ASTStmts.size() == 0 ||
-        !llvm::isa<T>(Parsed.ASTStmts[0].get())) {
+    if (Parsed.TU.children().size() == 0 ||
+        !llvm::isa<T>(Parsed.TU.Body[0].get())) {
       llvm::dbgs() << Code << '\n';
 
       llvm::dbgs() << "Parsed " << Code << " into:\n";
-      for (auto &S : Parsed.ASTStmts)
-        printAST(llvm::dbgs(), *S, Parsed.SourceMgr);
+      for (auto &S : Parsed.TU.children())
+        printAST(llvm::dbgs(), S, Parsed.SourceMgr);
     }
-    EXPECT_TRUE(Parsed.ASTStmts.size() > 0);
-    EXPECT_TRUE(llvm::isa<T>(Parsed.ASTStmts[0].get()));
+    EXPECT_TRUE(Parsed.TU.children().size() > 0);
+    EXPECT_TRUE(llvm::isa<T>(Parsed.TU.Body[0].get()));
   }
 };
 

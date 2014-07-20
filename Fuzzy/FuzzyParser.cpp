@@ -19,6 +19,8 @@ namespace fuzzy {
 namespace {
 struct TokenFilter {
   AnnotatedToken *First, *Last;
+  TokenFilter(AnnotatedToken *First, AnnotatedToken *Last)
+      : First(First), Last(Last) {}
 
   AnnotatedToken *next() {
     auto Ret = First++;
@@ -240,7 +242,9 @@ static std::unique_ptr<Stmt> parseReturnStmt(TokenFilter &TF) {
 }
 
 static void parseTypeDecorations(TokenFilter &TF, Type &T) {
-  while (checkKind(TF, tok::star) || checkKind(TF, tok::amp))
+  // TODO: add const and volatile
+  while (checkKind(TF, tok::star) || checkKind(TF, tok::amp) ||
+         checkKind(TF, tok::ampamp))
     T.Decorations.push_back(Type::Decoration(checkKind(TF, tok::star)
                                                  ? Type::Decoration::Pointer
                                                  : Type::Decoration::Reference,
@@ -280,9 +284,23 @@ static bool isBuiltinType(tok::TokenKind K) {
   }
 }
 
+static bool isCVQualifier(tok::TokenKind K) {
+  switch (K) {
+  case tok::kw_const:
+  case tok::kw_volatile:
+  case tok::kw_register:
+    return true;
+  default:
+    return false;
+  }
+}
+
 static std::unique_ptr<Type> parseType(TokenFilter &TF, bool WithDecorations) {
   auto Guard = TF.guard();
   std::unique_ptr<Type> T = llvm::make_unique<Type>();
+
+  while (TF.peek() && isCVQualifier(TF.peek()->Tok.getKind()))
+    T->addNameQualifier(TF.next());
 
   if (checkKind(TF, tok::kw_auto)) {
     T->addNameQualifier(TF.next());
@@ -292,6 +310,8 @@ static std::unique_ptr<Type> parseType(TokenFilter &TF, bool WithDecorations) {
   } else if (!parseQualifiedID(TF, *T)) {
     return {};
   }
+  while (TF.peek() && isCVQualifier(TF.peek()->Tok.getKind()))
+    T->addNameQualifier(TF.next());
 
   if (WithDecorations)
     parseTypeDecorations(TF, *T);
@@ -366,19 +386,40 @@ static std::unique_ptr<Stmt> parseDeclStmt(TokenFilter &TF) {
   return {};
 }
 
-static std::unique_ptr<FunctionDecl> parseFunctionStmt(TokenFilter &TF) {
+static bool parseDestructor(TokenFilter &TF, FunctionDecl &F) {
+  if (!checkKind(TF, tok::tilde))
+    return false;
+  F.setName(TF.next());
+  return static_cast<bool>(F.ReturnType = parseType(TF));
+}
+
+static std::unique_ptr<FunctionDecl>
+parseFunctionDecl(TokenFilter &TF, bool NameOptional = false) {
   auto Guard = TF.guard();
   auto F = llvm::make_unique<FunctionDecl>();
   if (checkKind(TF, tok::kw_static))
     F->setStatic(TF.next());
-  if (auto Type = parseType(TF))
-    F->ReturnType = std::move(Type);
-  else
-    return {};
+  if (checkKind(TF, tok::kw_virtual))
+    F->setStatic(TF.next());
 
-  if (!checkKind(TF, tok::identifier))
+  bool InDestructor = false;
+
+  if (auto T = parseType(TF)) {
+    F->ReturnType = std::move(T);
+  } else if (NameOptional && parseDestructor(TF, *F)) {
+    InDestructor = true;
+  } else {
     return {};
-  F->setName(TF.next());
+  }
+
+  if (!InDestructor) {
+    if (!checkKind(TF, tok::identifier)) {
+      if (!NameOptional)
+        return {};
+    } else {
+      F->setName(TF.next());
+    }
+  }
 
   if (!checkKind(TF, tok::l_paren))
     return {};
@@ -397,6 +438,13 @@ static std::unique_ptr<FunctionDecl> parseFunctionStmt(TokenFilter &TF) {
     return {};
 
   F->setRightParen(TF.next());
+
+  // if (InConstructor && checkKind(TF, tok::colon)) {
+  // TODO: Don't skip initializer list and [[x]] and const
+  while (TF.peek() && !checkKind(TF, tok::l_brace) && !checkKind(TF, tok::semi))
+    TF.next();
+  //}
+
   if (checkKind(TF, tok::semi))
     F->setSemi(TF.next());
   Guard.dismiss();
@@ -415,14 +463,136 @@ static std::unique_ptr<Stmt> skipUnparsable(TokenFilter &TF) {
   return std::move(UB);
 }
 
-static std::unique_ptr<Stmt> parseAny(TokenFilter &TF) {
-  assert(TF.peek());
+static std::unique_ptr<Stmt> parseLabelStmt(TokenFilter &TF) {
+  auto Guard = TF.guard();
+  if (!(checkKind(TF, tok::identifier) || checkKind(TF, tok::kw_private) ||
+        checkKind(TF, tok::kw_protected) || checkKind(TF, tok::kw_public)))
+    return {};
+  auto *LabelName = TF.next();
+  if (!checkKind(TF, tok::colon))
+    return {};
+  Guard.dismiss();
+  return llvm::make_unique<LabelStmt>(LabelName, TF.next());
+}
+
+static std::unique_ptr<Stmt> parseAny(TokenFilter &TF,
+                                      bool SkipUnparsable = true,
+                                      bool NameOptional = false);
+
+static bool parseScope(TokenFilter &TF, Scope &Sc) {
+  if (checkKind(TF, tok::r_brace))
+    return true;
+  while (auto St = parseAny(TF, true, true)) {
+    Sc.addStmt(std::move(St));
+    if (!TF.peek())
+      return false;
+    if (checkKind(TF, tok::r_brace))
+      return true;
+  }
+  return checkKind(TF, tok::r_brace);
+}
+
+static std::unique_ptr<CompoundStmt> parseCompoundStmt(TokenFilter &TF) {
+  if (!checkKind(TF, tok::l_brace))
+    return {};
+  auto C = llvm::make_unique<CompoundStmt>();
+  C->setLeftParen(TF.next());
+  parseScope(TF, *C);
+  if (checkKind(TF, tok::r_brace))
+    C->setRightParen(TF.next());
+  // else: just pass
+  return C;
+}
+
+static bool parseClassScope(TokenFilter &TF, ClassDecl &C) {
+  if (!checkKind(TF, tok::l_brace))
+    return false;
+
+  C.setLeftParen(TF.next());
+  if (!parseScope(TF, C))
+    return false;
+
+  if (checkKind(TF, tok::r_brace))
+    C.setRightParen(TF.next());
+
+  if (checkKind(TF, tok::semi))
+    C.setSemi(TF.next());
+  // else: just pass
+
+  return true;
+}
+static std::unique_ptr<ClassDecl> parseClassDecl(TokenFilter &TF) {
+  auto Guard = TF.guard();
+
+  if (!(checkKind(TF, tok::kw_class) || checkKind(TF, tok::kw_struct) ||
+        checkKind(TF, tok::kw_union) || checkKind(TF, tok::kw_enum)))
+    return {};
+  auto C = llvm::make_unique<ClassDecl>();
+  C->setClass(TF.next());
+
+  if (!(C->Name = parseType(TF)))
+    return {};
+
+  if (checkKind(TF, tok::colon)) {
+    C->setColon(TF.next());
+    bool Skip = true;
+    for (;;) {
+      AnnotatedToken *Accessibility = nullptr;
+      if (checkKind(TF, tok::kw_private) || checkKind(TF, tok::kw_protected) ||
+          checkKind(TF, tok::kw_public))
+        Accessibility = TF.next();
+      auto T = parseType(TF, false);
+      if (!T)
+        break;
+      if (checkKind(TF, tok::l_brace)) {
+        C->addBaseClass(Accessibility, std::move(T), nullptr);
+        Skip = false;
+        break;
+      }
+      if (!checkKind(TF, tok::comma))
+        break;
+      C->addBaseClass(Accessibility, std::move(T), TF.next());
+    }
+    if (Skip) {
+      while (!checkKind(TF, tok::l_brace))
+        TF.next();
+    }
+  }
+
+  if (checkKind(TF, tok::semi))
+    C->setSemi(TF.next());
+  else
+    parseClassScope(TF, *C);
+
+  Guard.dismiss();
+  return C;
+}
+
+static std::unique_ptr<Stmt> parseAny(TokenFilter &TF, bool SkipUnparsable,
+                                      bool NameOptional) {
   if (auto S = parseReturnStmt(TF))
     return S;
   if (auto S = parseDeclStmt(TF))
     return S;
-  if (auto S = parseFunctionStmt(TF))
+  if (auto S = parseLabelStmt(TF))
+    return S;
+  if (auto S = parseFunctionDecl(TF, NameOptional)) {
+    if (checkKind(TF, tok::semi))
+      S->setSemi(TF.next());
+    else if (checkKind(TF, tok::l_brace)) {
+      S->Body = parseCompoundStmt(TF);
+    }
     return std::move(S);
+  }
+
+  if (auto S = parseClassDecl(TF)) {
+    if (checkKind(TF, tok::semi))
+      S->setSemi(TF.next());
+    else if (checkKind(TF, tok::l_brace)) {
+      parseClassScope(TF, *S);
+    }
+    return std::move(S);
+  }
   {
     auto Guard = TF.guard();
     if (auto E = parseExpression(TF)) {
@@ -432,16 +602,15 @@ static std::unique_ptr<Stmt> parseAny(TokenFilter &TF) {
       }
     }
   }
-  return skipUnparsable(TF);
+  return SkipUnparsable ? skipUnparsable(TF) : std::unique_ptr<Stmt>();
 }
 
-llvm::SmallVector<std::unique_ptr<Stmt>, 8> fuzzyparse(AnnotatedToken *first,
-                                                       AnnotatedToken *last) {
-  llvm::SmallVector<std::unique_ptr<Stmt>, 8> Result;
-  TokenFilter TF{ first, last };
+TranslationUnit fuzzyparse(AnnotatedToken *first, AnnotatedToken *last) {
+  TranslationUnit TU;
+  TokenFilter TF(first, last);
   while (TF.peek())
-    Result.push_back(parseAny(TF));
-  return Result;
+    TU.addStmt(parseAny(TF));
+  return TU;
 }
 
 } // end namespace fuzzy

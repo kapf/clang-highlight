@@ -51,6 +51,9 @@ public:
     BinaryOperatorClass,
     CallExprClass,
     lastExpr,
+    LabelStmtClass,
+    ClassDeclClass,
+    NamespaceDeclClass,
     FunctionDeclClass,
   };
 
@@ -76,7 +79,6 @@ public:
   }
 };
 inline Expr::~Expr() {}
-
 
 class Type;
 
@@ -117,7 +119,7 @@ struct QualifiedID {
     for (auto &N : NameSegments)
       N->setASTReference(Ref);
     if (TemplateArgs) {
-      for (auto& ATok : (*TemplateArgs)->Separators)
+      for (auto &ATok : (*TemplateArgs)->Separators)
         ATok->setASTReference(Ref);
     }
   }
@@ -150,9 +152,7 @@ public:
   void addNameQualifier(AnnotatedToken *NameTok) {
     Qualifier.addNameQualifier(NameTok, this);
   }
-  void makeTemplateArgs() {
-    Qualifier.makeTemplateArgs();
-  }
+  void makeTemplateArgs() { Qualifier.makeTemplateArgs(); }
   void addTemplateSeparator(AnnotatedToken *ATok) {
     Qualifier.addTemplateSeparator(ATok, this);
   }
@@ -281,34 +281,6 @@ struct UnparsableBlock : Stmt {
   }
 };
 
-template <typename Iter, typename Value> class IndirectRange {
-public:
-  IndirectRange(Iter First, Iter Last) : First(First), Last(Last) {}
-  struct IndirectIter {
-    IndirectIter(Iter Pos) : Pos(Pos) {}
-    Iter Pos;
-    friend bool operator==(IndirectIter LHS, IndirectIter RHS) {
-      return LHS.Pos == RHS.Pos;
-    }
-    IndirectIter operator++() {
-      ++Pos;
-      return *this;
-    }
-    IndirectIter operator++(int) {
-      auto Self = *this;
-      ++*this;
-      return Self;
-    }
-    Value &operator*() { return **Pos; }
-  };
-
-  IndirectIter begin() { return First; }
-  IndirectIter end() { return Last; }
-
-private:
-  IndirectIter First, Last;
-};
-
 class Expr;
 
 /// By a semicolon terminated statement
@@ -321,9 +293,7 @@ protected:
   LineStmt(ASTElementClass SC, nullptr_t) : Stmt(SC), Semi(nullptr) {}
 
 public:
-  void setSemi(AnnotatedToken *Tok) {
-    Semi = AnnotatedTokenRef(Tok, this);
-  }
+  void setSemi(AnnotatedToken *Tok) { Semi = AnnotatedTokenRef(Tok, this); }
 };
 
 /// An expression terminated by a semicolon
@@ -352,39 +322,14 @@ struct ReturnStmt : LineStmt {
   }
 };
 
-/// A {}-Block with Statements inside.
-class CompoundStmt : public Stmt {
-public:
-  llvm::SmallVector<std::unique_ptr<Stmt>, 8> Body;
-  using child_range = IndirectRange<
-      llvm::SmallVector<std::unique_ptr<Stmt>, 8>::iterator, Stmt>;
+struct LabelStmt : Stmt {
+  AnnotatedTokenRef LabelName, Colon;
 
-  enum {
-    LBR,
-    RBR,
-    END_EXPR
-  };
-  AnnotatedTokenRef Brackets[END_EXPR];
-
-  CompoundStmt(AnnotatedToken *lbr, AnnotatedToken *rbr)
-      : Stmt(CompoundStmtClass) {
-    setBracket(LBR, lbr);
-    setBracket(RBR, rbr);
-  }
-
-  void setBracket(int BracIdx, AnnotatedToken *Tok) {
-    assert(0 <= BracIdx && BracIdx < END_EXPR);
-    Brackets[BracIdx] = AnnotatedTokenRef(Tok, this);
-  }
-
-  void addStmt(std::unique_ptr<Stmt> Statement) {
-    Body.push_back(std::move(Statement));
-  }
-
-  child_range children() { return child_range(Body.begin(), Body.end()); }
+  LabelStmt(AnnotatedToken *LabelName, AnnotatedToken *Colon)
+    : Stmt(LabelStmtClass), LabelName(LabelName, this), Colon(Colon, this) {}
 
   static bool classof(const ASTElement *T) {
-    return T->getASTClass() == CompoundStmtClass;
+    return T->getASTClass() == LabelStmtClass;
   }
 };
 
@@ -423,9 +368,7 @@ struct Type : ASTElement {
   void addNameQualifier(AnnotatedToken *NameTok) {
     Qualifier.addNameQualifier(NameTok, this);
   }
-  void makeTemplateArgs() {
-    Qualifier.makeTemplateArgs();
-  }
+  void makeTemplateArgs() { Qualifier.makeTemplateArgs(); }
   void addTemplateSeparator(AnnotatedToken *ATok) {
     Qualifier.addTemplateSeparator(ATok, this);
   }
@@ -523,6 +466,8 @@ struct DeclStmt : LineStmt {
   }
 };
 
+class CompoundStmt;
+
 struct FunctionDecl : Stmt { // TODO: Not a real statement
   FunctionDecl() : Stmt(FunctionDeclClass) {}
   enum {
@@ -547,7 +492,7 @@ struct FunctionDecl : Stmt { // TODO: Not a real statement
     Refs[Index] = AnnotatedTokenRef(Tok, this);
   }
   void setLeftParen(AnnotatedToken *Tok) { setRef(LEFT, Tok); }
-  void setRightParen(AnnotatedToken *Tok) { setRef(LEFT, Tok); }
+  void setRightParen(AnnotatedToken *Tok) { setRef(RIGHT, Tok); }
   void setStatic(AnnotatedToken *Tok) { setRef(STATIC, Tok); }
   void setName(AnnotatedToken *Tok) { setRef(NAME, Tok); }
   void setSemi(AnnotatedToken *Tok) { setRef(SEMI, Tok); }
@@ -559,10 +504,159 @@ struct FunctionDecl : Stmt { // TODO: Not a real statement
   }
 };
 
-llvm::SmallVector<std::unique_ptr<Stmt>, 8> fuzzyparse(AnnotatedToken *first,
-                                                       AnnotatedToken *last);
+template <typename Iter, typename Value> class IndirectRange {
+public:
+  IndirectRange(Iter First, Iter Last) : First(First), Last(Last) {}
+  struct IndirectIter {
+    IndirectIter(Iter Pos) : Pos(Pos) {}
+    Iter Pos;
+    friend bool operator==(IndirectIter LHS, IndirectIter RHS) {
+      return LHS.Pos == RHS.Pos;
+    }
+    friend bool operator!=(IndirectIter LHS, IndirectIter RHS) {
+      return LHS.Pos != RHS.Pos;
+    }
+    IndirectIter operator++() {
+      ++Pos;
+      return *this;
+    }
+    IndirectIter operator++(int) {
+      auto Self = *this;
+      ++*this;
+      return Self;
+    }
+    Value &operator*() { return **Pos; }
+  };
 
-void printAST(llvm::raw_ostream& OS, const Stmt &Root, const SourceManager &SourceMgr);
+  IndirectIter begin() { return First; }
+  IndirectIter end() { return Last; }
+
+  std::size_t size() const {
+    static_assert(
+        std::is_base_of<
+            std::random_access_iterator_tag,
+            typename std::iterator_traits<Iter>::iterator_category>::value,
+        "Size only allowed for Random Access Iterators.");
+    return std::distance(First.Pos, Last.Pos);
+  }
+
+private:
+  IndirectIter First, Last;
+};
+
+struct Scope {
+  using child_range = IndirectRange<
+      llvm::SmallVector<std::unique_ptr<Stmt>, 8>::iterator, Stmt>;
+  using const_child_range = IndirectRange<
+      llvm::SmallVector<std::unique_ptr<Stmt>, 8>::const_iterator, Stmt>;
+
+  llvm::SmallVector<std::unique_ptr<Stmt>, 8> Body;
+
+  child_range children() { return child_range(Body.begin(), Body.end()); }
+  const_child_range children() const {
+    return const_child_range(Body.begin(), Body.end());
+  }
+
+  void addStmt(std::unique_ptr<Stmt> Statement) {
+    Body.push_back(std::move(Statement));
+  }
+};
+
+template <typename Derived> struct BlockScope : Scope {
+  enum {
+    LBR,
+    RBR,
+    END_EXPR
+  };
+  AnnotatedTokenRef Brackets[END_EXPR];
+  void setBracket(int BracIdx, AnnotatedToken *Tok) {
+    assert(0 <= BracIdx && BracIdx < END_EXPR);
+    Brackets[BracIdx] = AnnotatedTokenRef(Tok, static_cast<Derived *>(this));
+  }
+  void setLeftParen(AnnotatedToken *Tok) { setBracket(LBR, Tok); }
+  void setRightParen(AnnotatedToken *Tok) { setBracket(RBR, Tok); }
+
+  bool hasScope() const { return Brackets[LBR]; }
+};
+
+/// A {}-Block with Statements inside.
+class CompoundStmt : public Stmt, public BlockScope<CompoundStmt> {
+public:
+  CompoundStmt(AnnotatedToken *lbr, AnnotatedToken *rbr)
+      : Stmt(CompoundStmtClass) {
+    setBracket(LBR, lbr);
+    setBracket(RBR, rbr);
+  }
+
+  CompoundStmt() : Stmt(CompoundStmtClass) {}
+
+  static bool classof(const ASTElement *T) {
+    return T->getASTClass() == CompoundStmtClass;
+  }
+};
+
+struct ClassDecl : LineStmt, BlockScope<ClassDecl> {
+  enum {
+    CLASS,
+    COLON,
+    END_EXPR
+  };
+  AnnotatedTokenRef Refs[END_EXPR];
+
+  std::unique_ptr<Type> Name;
+
+  struct BaseClass {
+    AnnotatedTokenRef Accessibility, Comma;
+    std::unique_ptr<Type> T;
+  };
+
+  llvm::SmallVector<BaseClass, 1> BaseClasses;
+
+  ClassDecl() : LineStmt(ClassDeclClass, nullptr) {}
+
+  void setRef(int Index, AnnotatedToken *Tok) {
+    Refs[Index] = AnnotatedTokenRef(Tok, this);
+  }
+  void setClass(AnnotatedToken *Tok) { setRef(CLASS, Tok); }
+  void setColon(AnnotatedToken *Tok) { setRef(COLON, Tok); }
+
+  void addBaseClass(AnnotatedToken *Accessibility, std::unique_ptr<Type> T,
+                    AnnotatedToken *Comma) {
+    BaseClasses.push_back({ AnnotatedTokenRef(Accessibility, this),
+                            AnnotatedTokenRef(Comma, this),
+                            std::move(T), });
+  }
+
+  static bool classof(const ASTElement *T) {
+    return T->getASTClass() == ClassDeclClass;
+  }
+};
+
+struct NamespaceDecl : Stmt, BlockScope<NamespaceDecl> {
+  enum {
+    NAMESPACE,
+    NAME,
+    END_EXPR
+  };
+  AnnotatedTokenRef Refs[END_EXPR];
+
+  void setRef(int Index, AnnotatedToken *Tok) {
+    Refs[Index] = AnnotatedTokenRef(Tok, this);
+  }
+  void setNamespace(AnnotatedToken *Tok) { setRef(NAMESPACE, Tok); }
+  void setName(AnnotatedToken *Tok) { setRef(NAME, Tok); }
+
+  static bool classof(const ASTElement *T) {
+    return T->getASTClass() == NamespaceDeclClass;
+  }
+};
+
+struct TranslationUnit : Scope {};
+
+TranslationUnit fuzzyparse(AnnotatedToken *first, AnnotatedToken *last);
+
+void printAST(llvm::raw_ostream &OS, const Stmt &Root,
+              const SourceManager &SourceMgr);
 
 } // end namespace fuzzy
 } // end namespace clang
