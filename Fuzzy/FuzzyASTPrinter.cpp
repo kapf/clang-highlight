@@ -39,19 +39,19 @@ struct ASTPrinter {
   void print(Indented Indent, const VarDecl &DCL);
   void print(Indented Indent, const Expr &EXP);
   void print(Indented Indent, const Stmt &stmt);
-  void print(Indented Indent, const QualifiedID& Qual);
-  void printScope(Indented Indent, const Scope& Sc);
+  void print(Indented Indent, const QualifiedID &Qual);
+  void printScope(Indented Indent, const Scope &Sc);
 };
 } // end anonymous namespace
 
-void ASTPrinter::printScope(Indented Indent, const Scope& Sc) {
+void ASTPrinter::printScope(Indented Indent, const Scope &Sc) {
   OS << "{\n";
   for (auto &S : Sc.children())
     print(Indent.next(), S);
-  OS << Indent << "}\n";  
+  OS << Indent << "}\n";
 }
 
-void ASTPrinter::print(Indented Indent, const QualifiedID& Qual) {
+void ASTPrinter::print(Indented Indent, const QualifiedID &Qual) {
   for (auto &N : Qual.NameSegments) {
     OS << N->getText(SourceMgr);
   }
@@ -110,6 +110,9 @@ void ASTPrinter::print(Indented Indent, const Expr &EXP) {
   } else if (auto *Unar = llvm::dyn_cast<UnaryOperator>(&EXP)) {
     OS << Indent << Unar->OperatorTok->getText(SourceMgr) << "\n";
     print(Indent.next(), *Unar->Value);
+  } else if (auto *PE = llvm::dyn_cast<ParenExpr>(&EXP)) {
+    OS << Indent << "ParenExpr:\n";
+    print(Indent.next(), *PE->Value);
   } else {
     llvm_unreachable("TODO: unhandled fuzzy ast node of type Expr");
   }
@@ -143,8 +146,10 @@ void ASTPrinter::print(Indented Indent, const Stmt &stmt) {
     print(Indent.next(), *CD->Name);
     if (!CD->BaseClasses.empty()) {
       OS << " derived from\n";
-      for (auto& BC : CD->BaseClasses) {
-        OS << Indent.next() << (BC.Accessibility ? BC.Accessibility->getText(SourceMgr) : "<default accessibility>") << ' ';
+      for (auto &BC : CD->BaseClasses) {
+        OS << Indent.next()
+           << (BC.Accessibility ? BC.Accessibility->getText(SourceMgr)
+                                : "<default accessibility>") << ' ';
         print(Indent.next().next(), *BC.T);
       }
     }
@@ -154,12 +159,19 @@ void ASTPrinter::print(Indented Indent, const Stmt &stmt) {
       printScope(Indent, *CD);
   } else if (auto *LBL = llvm::dyn_cast<LabelStmt>(&stmt)) {
     OS << Indent << "Label '" << LBL->LabelName->getText(SourceMgr) << "'\n";
+  } else if (auto *NS = llvm::dyn_cast<NamespaceDecl>(&stmt)) {
+    OS << Indent << "Namespace '"
+       << (NS->Refs[NamespaceDecl::NAME]
+               ? NS->Refs[NamespaceDecl::NAME]->getText(SourceMgr)
+               : "<anonymous>") << '\'';
+    printScope(Indent, *NS);
   } else {
     llvm_unreachable("TODO: unhandled fuzzy ast node");
   }
 }
 
-void printAST(llvm::raw_ostream& OS, const Stmt &Root, const SourceManager &SourceMgr) {
+void printAST(llvm::raw_ostream &OS, const Stmt &Root,
+              const SourceManager &SourceMgr) {
   ASTPrinter AP{ SourceMgr, OS };
   AP.print(Indented(0), Root);
 }

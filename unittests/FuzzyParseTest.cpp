@@ -135,32 +135,50 @@ protected:
         EXPECT_TRUE(llvm::isa<UnparsableBlock>(Tok.ASTReference));
   }
 
+  void dump(ParseResult &Parsed, StringRef Code) {
+    llvm::dbgs() << Code << '\n';
+
+    llvm::dbgs() << "Parsed " << Code << " into:\n";
+    for (auto &S : Parsed.TU.children())
+      printAST(llvm::dbgs(), S, Parsed.SourceMgr);
+  }
+
   template <typename T> void checkToplevel(StringRef Code) {
     ParseResult Parsed(Code);
     if (Parsed.TU.children().size() != 1 ||
         !llvm::isa<T>(Parsed.TU.Body[0].get())) {
-      llvm::dbgs() << Code << '\n';
-
-      llvm::dbgs() << "Parsed " << Code << " into:\n";
-      for (auto &S : Parsed.TU.children())
-        printAST(llvm::dbgs(), S, Parsed.SourceMgr);
+      dump(Parsed, Code);
     }
     EXPECT_EQ(Parsed.TU.children().size(), size_t(1));
     EXPECT_TRUE(llvm::isa<T>(Parsed.TU.Body[0].get()));
   }
 
-  template <typename T> void checkFirst(StringRef Code) {
+  template <typename F> void checkFirstOn(StringRef Code, F &&f) {
     ParseResult Parsed(Code);
-    if (Parsed.TU.children().size() == 0 ||
-        !llvm::isa<T>(Parsed.TU.Body[0].get())) {
-      llvm::dbgs() << Code << '\n';
-
-      llvm::dbgs() << "Parsed " << Code << " into:\n";
-      for (auto &S : Parsed.TU.children())
-        printAST(llvm::dbgs(), S, Parsed.SourceMgr);
+    if (Parsed.TU.children().size() == 0) {
+      dump(Parsed, Code);
+      EXPECT_TRUE(Parsed.TU.children().size() > 0);
+      return;
     }
-    EXPECT_TRUE(Parsed.TU.children().size() > 0);
-    EXPECT_TRUE(llvm::isa<T>(Parsed.TU.Body[0].get()));
+    if (!f(*Parsed.TU.Body[0], false)) {
+      dump(Parsed, Code);
+      EXPECT_TRUE(f(*Parsed.TU.Body[0], true));
+    }
+  }
+
+  template <typename T> void checkFirst(StringRef Code) {
+    checkFirstOn(Code, [&](const Stmt &S, bool Abort) {
+      if (Abort)
+        EXPECT_TRUE(llvm::isa<T>(S));
+      else
+        return llvm::isa<T>(S);
+      return true;
+    });
+  }
+  template <typename T>
+  void checkFirst(std::initializer_list<const char *> Codes) {
+    for (const char *C : Codes)
+      checkFirst<T>(C);
   }
 };
 
@@ -212,6 +230,9 @@ TEST_F(FuzzyParseTest, DeclStmtTest) {
   checkToplevel<DeclStmt>("signed char a;");
   checkToplevel<DeclStmt>("double a;");
 
+  checkParse("register const volatile constexpr int i;",
+             checkTypeSeq<Type, Type, Type, Type, Type, VarDecl, DeclStmt>());
+
   checkUnparsable("int 1=2;");
 }
 
@@ -234,7 +255,7 @@ TEST_F(FuzzyParseTest, ExprLineStmtTest) {
   checkToplevel<ExprLineStmt>("a|b;");
   checkToplevel<ExprLineStmt>("a<<b;");
   checkToplevel<ExprLineStmt>("a>>b;");
-  // checkToplevel<ExprLineStmt>("a<b;");
+  checkToplevel<ExprLineStmt>("a<b;");
   checkToplevel<ExprLineStmt>("a>b;");
   checkToplevel<ExprLineStmt>("~a;");
   checkToplevel<ExprLineStmt>("!a;");
@@ -247,6 +268,7 @@ TEST_F(FuzzyParseTest, ExprLineStmtTest) {
   checkToplevel<ExprLineStmt>("true;");
   checkToplevel<ExprLineStmt>("false;");
   checkToplevel<ExprLineStmt>("-1;");
+  checkToplevel<ExprLineStmt>("(1+-1)*(3+5);");
 }
 
 TEST_F(FuzzyParseTest, QualifiedIDs) {
@@ -270,10 +292,10 @@ TEST_F(FuzzyParseTest, QualifiedIDs) {
                    LiteralConstant, CallExpr, DeclStmt>());
   checkToplevel<ExprLineStmt>("n::f(a::b<x>());");
   checkToplevel<ExprLineStmt>("n::f<a,1,2>(a::b<2*3>());");
-  // checkToplevel<ExprLineStmt>("t<1+b>()");
-  // checkToplevel<ExprLineStmt>("t< (1<<2) >()");
-  // checkToplevel<ExprLineStmt>("t< (1>2) >()");
-  checkUnparsable("t<1> 2>()");
+  checkToplevel<ExprLineStmt>("t<1+b>();");
+  checkToplevel<ExprLineStmt>("t< 1<<2 >();");
+  checkToplevel<ExprLineStmt>("t< (1>2) >();");
+  checkUnparsable("t<1> 2>();");
 }
 
 TEST_F(FuzzyParseTest, FunctionDeclStmt) {
@@ -299,6 +321,42 @@ TEST_F(FuzzyParseTest, ReturnStmt) {
   checkToplevel<ReturnStmt>("return a*b;");
   checkUnparsable("return return;");
   checkToplevel<ReturnStmt>("return;");
+}
+
+TEST_F(FuzzyParseTest, StructDecl) {
+  checkFirst<ClassDecl>(
+      { "struct C;", "union C;", "class C{};", "class C{ ><unparsable>< };" });
+
+  auto checkFirstIsFunctionDecl = [&](StringRef Code) {
+    checkFirstOn(Code, [](const Stmt &S, bool Abort) {
+      if (Abort)
+        EXPECT_TRUE(llvm::isa<ClassDecl>(S));
+      else if (!llvm::isa<ClassDecl>(S))
+        return false;
+      const auto &CD = llvm::cast<ClassDecl>(S);
+      if (Abort)
+        EXPECT_EQ(CD.Body.size(), (size_t)1);
+      else if (CD.Body.size() != 1)
+        return false;
+
+      if (Abort)
+        EXPECT_TRUE(llvm::isa<FunctionDecl>(*CD.Body.front()));
+      else if (!llvm::isa<FunctionDecl>(*CD.Body.front()))
+        return false;
+
+      return true;
+    });
+  };
+
+  checkFirstIsFunctionDecl("struct C { C(){} };");
+  checkFirstIsFunctionDecl("struct C { ~C(){} };");
+  checkFirstIsFunctionDecl("struct C { virtual void f() override =0; };");
+  checkFirstIsFunctionDecl(
+      "struct C { static constexpr bool g() { return true; } };");
+  checkFirstIsFunctionDecl("struct C { C()=default; };");
+  checkFirstIsFunctionDecl("struct C { bool operator<(int o); };");
+  checkFirstIsFunctionDecl(
+      "struct C { friend C operator==(C lhs, C rhs)=default; };");
 }
 
 } // end namespace fuzzy

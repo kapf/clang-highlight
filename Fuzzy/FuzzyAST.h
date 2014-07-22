@@ -40,12 +40,13 @@ public:
     TypeDecorationClass,
     VarInitializationClass,
     VarDeclClass,
-    firstExpr,
     ExprLineStmtClass,
     ReturnStmtClass,
     CompoundStmtClass,
     DeclStmtClass,
     DeclRefExprClass,
+    firstExpr,
+    ParenExprClass,
     LiteralConstantClass,
     UnaryOperatorClass,
     BinaryOperatorClass,
@@ -139,6 +140,36 @@ struct QualifiedID {
   }
   void addTemplateArgument(std::unique_ptr<Expr> E) {
     (*TemplateArgs)->Args.push_back(TypeOrExpression(std::move(E)));
+  }
+};
+
+// Parentheses over an expression
+class ParenExpr : public Expr {
+  enum {
+    LEFT,
+    RIGHT,
+    END_EXPR
+  };
+  AnnotatedTokenRef Parens[END_EXPR];
+
+public:
+  std::unique_ptr<Expr> Value;
+
+  ParenExpr(AnnotatedToken *Left, std::unique_ptr<Expr> Value,
+            AnnotatedToken *Right)
+      : Expr(ParenExprClass), Value(std::move(Value)) {
+    setLeftParen(Left);
+    setRightParen(Right);
+  }
+
+  void setParen(int Index, AnnotatedToken *AT) {
+    Parens[Index] = AnnotatedTokenRef(AT, this);
+  }
+  void setLeftParen(AnnotatedToken *AT) { setParen(LEFT, AT); }
+  void setRightParen(AnnotatedToken *AT) { setParen(RIGHT, AT); }
+
+  static bool classof(const ASTElement *T) {
+    return T->getASTClass() == ParenExprClass;
   }
 };
 
@@ -326,7 +357,7 @@ struct LabelStmt : Stmt {
   AnnotatedTokenRef LabelName, Colon;
 
   LabelStmt(AnnotatedToken *LabelName, AnnotatedToken *Colon)
-    : Stmt(LabelStmtClass), LabelName(LabelName, this), Colon(Colon, this) {}
+      : Stmt(LabelStmtClass), LabelName(LabelName, this), Colon(Colon, this) {}
 
   static bool classof(const ASTElement *T) {
     return T->getASTClass() == LabelStmtClass;
@@ -471,14 +502,13 @@ class CompoundStmt;
 struct FunctionDecl : Stmt { // TODO: Not a real statement
   FunctionDecl() : Stmt(FunctionDeclClass) {}
   enum {
-    NAME,
-    STATIC,
-    SEMI,
     LEFT,
     RIGHT,
+    SEMI,
     END_EXPR
   };
   AnnotatedTokenRef Refs[END_EXPR];
+  llvm::SmallVector<AnnotatedTokenRef, 1> Decls;
   llvm::SmallVector<std::unique_ptr<VarDecl>, 4> Params;
   llvm::SmallVector<AnnotatedTokenRef, 3> Commas;
 
@@ -493,9 +523,21 @@ struct FunctionDecl : Stmt { // TODO: Not a real statement
   }
   void setLeftParen(AnnotatedToken *Tok) { setRef(LEFT, Tok); }
   void setRightParen(AnnotatedToken *Tok) { setRef(RIGHT, Tok); }
-  void setStatic(AnnotatedToken *Tok) { setRef(STATIC, Tok); }
-  void setName(AnnotatedToken *Tok) { setRef(NAME, Tok); }
   void setSemi(AnnotatedToken *Tok) { setRef(SEMI, Tok); }
+  void addDeclSpecifier(AnnotatedToken *Tok) {
+    Decls.push_back(AnnotatedTokenRef(Tok, this));
+  }
+
+  QualifiedID Name;
+  void addNameQualifier(AnnotatedToken *NameTok) {
+    Name.addNameQualifier(NameTok, this);
+  }
+  void makeTemplateArgs(AnnotatedToken *Tok) {
+    llvm_unreachable("don't add template arguments to function names");
+  }
+  void addTemplateSeparator(AnnotatedToken *Tok) {
+    llvm_unreachable("don't add template arguments to function names");
+  }
 
   std::unique_ptr<CompoundStmt> Body;
 
@@ -639,6 +681,8 @@ struct NamespaceDecl : Stmt, BlockScope<NamespaceDecl> {
     END_EXPR
   };
   AnnotatedTokenRef Refs[END_EXPR];
+
+  NamespaceDecl() : Stmt(NamespaceDeclClass) {}
 
   void setRef(int Index, AnnotatedToken *Tok) {
     Refs[Index] = AnnotatedTokenRef(Tok, this);
