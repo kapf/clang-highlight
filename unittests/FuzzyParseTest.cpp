@@ -300,13 +300,15 @@ TEST_F(FuzzyParseTest, QualifiedIDs) {
 
 TEST_F(FuzzyParseTest, FunctionDeclStmt) {
   const char *Tests[] = {
-    "void f(int,int);", "void g(int i=0);",
+    "void f(int,int);", // (enforce line break for clang-highlight)
+    "void g(int i=0);",
     "static std::unique_ptr<VarDecl> parseVarDecl(TokenFilter &TF,"
     "                                             Type *TypeName = 0,"
     "                                             bool NameOptional = false);",
-    "void dismiss() { TF = nullptr; }", "type func1();",
-    "type func2() { 1+1; }", "type func3(type a) { 1+1; }",
-    "type func4(type a, type b) { 1+1; }", "static type func5();",
+    "void dismiss() { TF = nullptr; }",       //
+    "type func1();", "type func2() { 1+1; }", //
+    "type func3(type a) { 1+1; }", "type func4(type a, type b) { 1+1; }",
+    "static type func5();",
     "static std::unique_ptr<Expr> parseExpression(TokenFilter &TF,"
     "                                             int Precedence,"
     "                                             bool StopAtGreater);",
@@ -357,6 +359,34 @@ TEST_F(FuzzyParseTest, StructDecl) {
   checkFirstIsFunctionDecl("struct C { bool operator<(int o); };");
   checkFirstIsFunctionDecl(
       "struct C { friend C operator==(C lhs, C rhs)=default; };");
+}
+
+TEST_F(FuzzyParseTest, IfStmt) {
+  const char *Tests[] = {
+    "if (true) {}",     // (enforce line break for clang-highlight)
+    "if (0) do_sth();", //
+    "if (int i=0) {}",  //
+    "if (int i=0) {} else do_sth_else();",
+    "if (int*i=0) {} else if (false) {} else do_sth_else();",
+    "if (int*i=0) {} else if (ns::t<4> x=4) {} else do_sth_else();",
+    "if (int*i=0) {} else if (ns::t<4> x=4) {} else do_sth_else();",
+    "if (1){}else if(1){}else if(1){}else if(1){}else if(1){}else "
+    "if(1){}else{}",
+  };
+  for (const char *Code : Tests)
+    checkFirst<IfStmt>(Code);
+
+  checkUnparsable("else if (1);");
+}
+
+TEST_F(FuzzyParseTest, WhileStmt) {
+  const char *Tests[] = {
+    "while (true) {}",     // (enforce line break for clang-highlight)
+    "while (0) do_sth();", //
+    "while (int i=0) {}",  //
+  };
+  for (const char *Code : Tests)
+    checkFirst<WhileStmt>(Code);
 }
 
 } // end namespace fuzzy

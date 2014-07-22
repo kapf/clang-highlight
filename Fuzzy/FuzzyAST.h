@@ -29,9 +29,8 @@ namespace fuzzy {
 /// AnnotatedToken must be an ASTElement.  This class is not strictly needed
 /// from an AST point of view.
 class ASTElement {
-protected:
-  ~ASTElement() = default; // Not accessible
 public:
+  virtual ~ASTElement() = default; // Not accessible
   // TODO: TableGen
   enum ASTElementClass {
     NoASTElementClass = 0,
@@ -44,8 +43,8 @@ public:
     ReturnStmtClass,
     CompoundStmtClass,
     DeclStmtClass,
-    DeclRefExprClass,
     firstExpr,
+    DeclRefExprClass,
     ParenExprClass,
     LiteralConstantClass,
     UnaryOperatorClass,
@@ -53,14 +52,19 @@ public:
     CallExprClass,
     lastExpr,
     LabelStmtClass,
+    WhileStmtClass,
+    DoWhileStmtClass,
+    ForStmtClass,
+    IfStmtClass,
     ClassDeclClass,
     NamespaceDeclClass,
     FunctionDeclClass,
   };
 
-  ASTElement(ASTElementClass SC) : sClass(SC) {}
-
   ASTElementClass getASTClass() const { return sClass; }
+
+protected:
+  ASTElement(ASTElementClass SC) : sClass(SC) {}
 
 private:
   ASTElementClass sClass;
@@ -85,27 +89,22 @@ class Type;
 
 struct QualifiedID {
   class TypeOrExpression {
-    ASTElement *Ptr;
+    std::unique_ptr<ASTElement> Ptr;
 
   public:
-    TypeOrExpression(std::unique_ptr<Type> T); // : Ptr(T.release()) {}
-    TypeOrExpression(std::unique_ptr<Expr> E) : Ptr(E.release()) {}
+    TypeOrExpression(std::unique_ptr<Type> T);
+    TypeOrExpression(std::unique_ptr<Expr> E) : Ptr(std::move(E)) {}
     TypeOrExpression(const TypeOrExpression &) = delete;
     TypeOrExpression &operator=(const TypeOrExpression &) = delete;
-    TypeOrExpression(TypeOrExpression &&O) : Ptr(O.Ptr) { O.Ptr = nullptr; }
-    TypeOrExpression &operator=(TypeOrExpression &&O) {
-      std::swap(Ptr, O.Ptr);
-      return *this;
-    }
-
-    ~TypeOrExpression();
+    TypeOrExpression(TypeOrExpression &&O) = default;
+    TypeOrExpression &operator=(TypeOrExpression &&O) = default;
 
     bool isType() const {
       assert(Ptr);
-      return isa<Type>(Ptr);
+      return isa<Type>(Ptr.get());
     }
-    Type &asType() { return *cast<Type>(Ptr); }
-    Expr &asExpr() { return *cast<Expr>(Ptr); }
+    Type &asType() { return *cast<Type>(Ptr.get()); }
+    Expr &asExpr() { return *cast<Expr>(Ptr.get()); }
   };
 
   struct TemplateArguments {
@@ -422,16 +421,7 @@ struct Type : ASTElement {
 };
 
 inline QualifiedID::TypeOrExpression::TypeOrExpression(std::unique_ptr<Type> T)
-    : Ptr(T.release()) {}
-
-inline QualifiedID::TypeOrExpression::~TypeOrExpression() {
-  if (Ptr) {
-    if (Type *T = dyn_cast<Type>(Ptr))
-      delete T;
-    else
-      delete cast<Expr>(Ptr);
-  }
-}
+    : Ptr(std::move(T)) {}
 
 /// Initialization of a variable
 struct VarInitialization : ASTElement {
@@ -521,8 +511,8 @@ struct FunctionDecl : Stmt { // TODO: Not a real statement
   void setRef(int Index, AnnotatedToken *Tok) {
     Refs[Index] = AnnotatedTokenRef(Tok, this);
   }
-  void setLeftParen(AnnotatedToken *Tok) { setRef(LEFT, Tok); }
-  void setRightParen(AnnotatedToken *Tok) { setRef(RIGHT, Tok); }
+  void setLeftBrace(AnnotatedToken *Tok) { setRef(LEFT, Tok); }
+  void setRightBrace(AnnotatedToken *Tok) { setRef(RIGHT, Tok); }
   void setSemi(AnnotatedToken *Tok) { setRef(SEMI, Tok); }
   void addDeclSpecifier(AnnotatedToken *Tok) {
     Decls.push_back(AnnotatedTokenRef(Tok, this));
@@ -610,15 +600,15 @@ template <typename Derived> struct BlockScope : Scope {
     RBR,
     END_EXPR
   };
-  AnnotatedTokenRef Brackets[END_EXPR];
-  void setBracket(int BracIdx, AnnotatedToken *Tok) {
-    assert(0 <= BracIdx && BracIdx < END_EXPR);
-    Brackets[BracIdx] = AnnotatedTokenRef(Tok, static_cast<Derived *>(this));
+  AnnotatedTokenRef Braces[END_EXPR];
+  void setBrace(int BraceIdx, AnnotatedToken *Tok) {
+    assert(0 <= BraceIdx && BraceIdx < END_EXPR);
+    Braces[BraceIdx] = AnnotatedTokenRef(Tok, static_cast<Derived *>(this));
   }
-  void setLeftParen(AnnotatedToken *Tok) { setBracket(LBR, Tok); }
-  void setRightParen(AnnotatedToken *Tok) { setBracket(RBR, Tok); }
+  void setLeftBrace(AnnotatedToken *Tok) { setBrace(LBR, Tok); }
+  void setRightBrace(AnnotatedToken *Tok) { setBrace(RBR, Tok); }
 
-  bool hasScope() const { return Brackets[LBR]; }
+  bool hasScope() const { return Braces[LBR]; }
 };
 
 /// A {}-Block with Statements inside.
@@ -626,14 +616,147 @@ class CompoundStmt : public Stmt, public BlockScope<CompoundStmt> {
 public:
   CompoundStmt(AnnotatedToken *lbr, AnnotatedToken *rbr)
       : Stmt(CompoundStmtClass) {
-    setBracket(LBR, lbr);
-    setBracket(RBR, rbr);
+    setLeftBrace(lbr);
+    setRightBrace(rbr);
   }
 
   CompoundStmt() : Stmt(CompoundStmtClass) {}
 
   static bool classof(const ASTElement *T) {
     return T->getASTClass() == CompoundStmtClass;
+  }
+};
+
+using CondExpr = std::unique_ptr<ASTElement>;
+
+struct WhileStmt : Stmt {
+  WhileStmt() : Stmt(WhileStmtClass) {}
+
+  CondExpr Cond;
+  std::unique_ptr<Stmt> Body;
+
+  enum {
+    KEYWORD,
+    LEFT,
+    RIGHT,
+    END_EXPR,
+  };
+  AnnotatedTokenRef Refs[END_EXPR];
+
+  void setRef(int Index, AnnotatedToken *Tok) {
+    Refs[Index] = AnnotatedTokenRef(Tok, this);
+  }
+  void setKeyword(AnnotatedToken *Tok) { setRef(KEYWORD, Tok); }
+  void setLeftParen(AnnotatedToken *Tok) { setRef(LEFT, Tok); }
+  void setRightParen(AnnotatedToken *Tok) { setRef(RIGHT, Tok); }
+
+  static bool classof(const ASTElement *T) {
+    return T->getASTClass() == WhileStmtClass;
+  }
+};
+
+struct DoWhileStmt : LineStmt {
+  DoWhileStmt() : LineStmt(DoWhileStmtClass, nullptr) {}
+
+  CondExpr Cond;
+  std::unique_ptr<Stmt> Body;
+
+  enum {
+    KEYWORD_DO,
+    KEYWORD_WHILE,
+    LEFT,
+    RIGHT,
+    END_EXPR,
+  };
+  AnnotatedTokenRef Refs[END_EXPR];
+
+  void setRef(int Index, AnnotatedToken *Tok) {
+    Refs[Index] = AnnotatedTokenRef(Tok, this);
+  }
+  void setDo(AnnotatedToken *Tok) { setRef(KEYWORD_DO, Tok); }
+  void setWhile(AnnotatedToken *Tok) { setRef(KEYWORD_WHILE, Tok); }
+  void setLeftParen(AnnotatedToken *Tok) { setRef(LEFT, Tok); }
+  void setRightParen(AnnotatedToken *Tok) { setRef(RIGHT, Tok); }
+
+  static bool classof(const ASTElement *T) {
+    return T->getASTClass() == WhileStmtClass;
+  }
+};
+
+struct IfStmt : Stmt {
+  IfStmt() : Stmt(IfStmtClass) {}
+
+  struct IfBranch {
+    CondExpr Cond;
+    std::unique_ptr<Stmt> Body;
+
+    enum {
+      KEYWORD1,
+      KEYWORD2,
+      LEFT,
+      RIGHT,
+      END_EXPR,
+    };
+    AnnotatedTokenRef Refs[END_EXPR];
+
+    IfBranch(ASTElement *ASTRef, AnnotatedToken *Keyword1,
+             AnnotatedToken *Keyword2, AnnotatedToken *LeftParen, CondExpr Cond,
+             AnnotatedToken *RightParen, std::unique_ptr<Stmt> Body)
+        : Cond(std::move(Cond)), Body(std::move(Body)) {
+      setRef(KEYWORD1, Keyword1, ASTRef);
+      setRef(KEYWORD2, Keyword2, ASTRef);
+      setRef(LEFT, LeftParen, ASTRef);
+      setRef(RIGHT, RightParen, ASTRef);
+    }
+    void setRef(int Index, AnnotatedToken *Tok, ASTElement *ASTRef) {
+      Refs[Index] = AnnotatedTokenRef(Tok, ASTRef);
+    }
+  };
+
+  llvm::SmallVector<IfBranch, 2> Branches;
+
+  void addBranch(AnnotatedToken *Keyword1, AnnotatedToken *Keyword2,
+                 AnnotatedToken *LeftParen, CondExpr Cond,
+                 AnnotatedToken *RightParen, std::unique_ptr<Stmt> Body) {
+    Branches.push_back(IfBranch(this, Keyword1, Keyword2, LeftParen,
+                                std::move(Cond), RightParen, std::move(Body)));
+  }
+
+  static bool classof(const ASTElement *T) {
+    return T->getASTClass() == IfStmtClass;
+  }
+};
+
+struct ForStmt : Stmt {
+
+  ForStmt() : Stmt(ForStmtClass) {}
+
+  CondExpr Init, Cond;
+  std::unique_ptr<Expr> Inc;
+  std::unique_ptr<Stmt> Body;
+
+  enum {
+    KEYWORD,
+    LEFT,
+    RIGHT,
+    SEMI1,
+    SEMI2,
+    END_EXPR,
+  };
+  AnnotatedTokenRef Refs[END_EXPR];
+
+  void setRef(int Index, AnnotatedToken *Tok) {
+    Refs[Index] = AnnotatedTokenRef(Tok, this);
+  }
+  void setKeyword(AnnotatedToken *Tok) { setRef(KEYWORD, Tok); }
+  void setLeftParen(AnnotatedToken *Tok) { setRef(LEFT, Tok); }
+  void setRightParen(AnnotatedToken *Tok) { setRef(RIGHT, Tok); }
+
+  void setSemi1(AnnotatedToken *Tok) { setRef(SEMI1, Tok); }
+  void setSemi2(AnnotatedToken *Tok) { setRef(SEMI2, Tok); }
+
+  static bool classof(const ASTElement *T) {
+    return T->getASTClass() == ForStmtClass;
   }
 };
 

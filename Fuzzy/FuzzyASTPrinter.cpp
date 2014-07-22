@@ -138,8 +138,11 @@ void ASTPrinter::print(Indented Indent, const Stmt &stmt) {
     else
       OS << Indent.next() << "<void>\n";
   } else if (auto *FD = llvm::dyn_cast<FunctionDecl>(&stmt)) {
-    (void)FD;
-    OS << Indent << "FunctionDecl\n";
+    OS << Indent << "FunctionDecl '";
+    print(Indent.next().next(), FD->Name);
+    OS << "'\n" << Indent.next() << "Body: '";
+    if (FD->Body)
+      print(Indent.next().next(), *FD->Body);
   } else if (auto *CD = llvm::dyn_cast<ClassDecl>(&stmt)) {
     OS << Indent << '\'' << CD->Refs[ClassDecl::CLASS]->getText(SourceMgr)
        << "' ";
@@ -165,6 +168,34 @@ void ASTPrinter::print(Indented Indent, const Stmt &stmt) {
                ? NS->Refs[NamespaceDecl::NAME]->getText(SourceMgr)
                : "<anonymous>") << '\'';
     printScope(Indent, *NS);
+  } else if (auto *If = llvm::dyn_cast<IfStmt>(&stmt)) {
+    OS << Indent << "If\n";
+    for (auto &B : If->Branches) {
+      if (B.Cond) {
+        OS << Indent.next() << "Condition:\n";
+        if (auto *D = llvm::dyn_cast<DeclStmt>(B.Cond.get()))
+          print(Indent.next().next(), *D);
+        else
+          print(Indent.next().next(), *llvm::cast<Expr>(B.Cond.get()));
+      } else {
+        OS << Indent.next() << "Condition: None\n";
+      }
+      OS << Indent.next() << "Body:\n";
+      print(Indent.next().next(), *B.Body);
+    }
+  } else if (auto *CS = llvm::dyn_cast<CompoundStmt>(&stmt)) {
+    OS << Indent << "CompoundStmt:\n";
+    for (auto &S : CS->Body)
+      print(Indent.next(), *S);
+  } else if (auto *While = llvm::dyn_cast<WhileStmt>(&stmt)) {
+    OS << Indent << "WhileStmt:\n";
+    OS << Indent.next() << "Condition:\n";
+    if (auto *D = llvm::dyn_cast<DeclStmt>(While->Cond.get()))
+      print(Indent.next().next(), *D);
+    else
+      print(Indent.next().next(), *llvm::cast<Expr>(While->Cond.get()));
+    OS << Indent.next() << "Body:\n";
+    print(Indent.next().next(), *While->Body);
   } else {
     llvm_unreachable("TODO: unhandled fuzzy ast node");
   }
