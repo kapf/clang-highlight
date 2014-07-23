@@ -44,6 +44,7 @@ static cl::opt<OutputFormat> OutputFormatFlag(
     cl::values(clEnumValN(OutputFormat::StdoutColored, "stdout",
                           "write colored stdout"),
                clEnumValN(OutputFormat::HTML, "html", "write html"),
+               clEnumValN(OutputFormat::SemanticHTML, "shtml", "write semantic html"),
                clEnumValEnd),
     cl::cat(ClangHighlightCategory));
 

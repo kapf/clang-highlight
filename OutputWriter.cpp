@@ -72,6 +72,26 @@ static const char *getSpanStyle(TokenClass Class) {
   }
 }
 
+static const char *getSpanClass(TokenClass Class) {
+  switch (Class) {
+  case TokenClass::Namespace:
+    return "ch-namespace";
+  case TokenClass::Type:
+    return "ch-type";
+  case TokenClass::Keyword:
+    return "ch-keyword";
+  case TokenClass::Comment:
+    return "ch-comment";
+  case TokenClass::Preprocessor:
+    return "ch-preprocessor";
+  case TokenClass::String:
+    return "ch-string";
+  case TokenClass::Char:
+    return "ch-char";
+  default:
+    return "ch-default";
+  }
+}
 namespace {
 class ColorStreamWriter : public OutputWriter {
   raw_ostream &OS;
@@ -107,12 +127,41 @@ public:
 };
 } // end anonymous namespace
 
+namespace {
+class SemanticHtmlWriter : public OutputWriter {
+  raw_ostream &OS;
+
+public:
+  SemanticHtmlWriter(raw_ostream &OS) : OS(OS) {
+    OS << R"XX(<style type="text/css">
+.clanghighlight span.ch-namespace { color:green }
+.clanghighlight span.ch-type { color:green }
+.clanghighlight span.ch-keyword { color:blue }
+.clanghighlight span.ch-comment { color:darkred }
+.clanghighlight span.ch-preprocessor { color:purple }
+.clanghighlight span.ch-string { color:red }
+.clanghighlight span.ch-char { color:magenta }
+.clanghighlight span.ch-default { color:black }
+</style>
+<p style="white-space:pre" class="clanghighlight"><tt>)XX";
+  }
+  ~SemanticHtmlWriter() { OS << "</tt></p>"; }
+
+  void writeToken(StringRef Text, TokenClass Class) override {
+    OS << R"(<span class=")" << getSpanClass(Class) << R"(">)"
+       << Text << "</span>";
+  }
+};
+} // end anonymous namespace
+
 std::unique_ptr<OutputWriter> makeOutputWriter(OutputFormat Format) {
   switch (Format) {
   case OutputFormat::StdoutColored:
     return std::unique_ptr<OutputWriter>(new ColorStreamWriter(llvm::outs()));
   case OutputFormat::HTML:
     return std::unique_ptr<OutputWriter>(new HtmlWriter(llvm::outs()));
+  case OutputFormat::SemanticHTML:
+    return std::unique_ptr<OutputWriter>(new SemanticHtmlWriter(llvm::outs()));
   default:
     llvm_unreachable("invalid flag");
   }

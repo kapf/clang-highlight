@@ -19,7 +19,8 @@ namespace highlight {
 enum class OutputFormat {
   StdoutColored,
   HTML,
-  // TODO: XML, SemanticHTML, LaTeX, SemanticLaTeX, ...
+  SemanticHTML,
+  // TODO: XML, LaTeX, SemanticLaTeX, ...
 };
 
 enum class TokenClass {
