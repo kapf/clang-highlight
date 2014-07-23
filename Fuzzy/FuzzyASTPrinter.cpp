@@ -41,6 +41,7 @@ struct ASTPrinter {
   void print(Indented Indent, const Stmt &stmt);
   void print(Indented Indent, const QualifiedID &Qual);
   void printScope(Indented Indent, const Scope &Sc);
+  void printCondition(Indented Indent, const char *Name, ASTElement *E);
 };
 } // end anonymous namespace
 
@@ -49,6 +50,21 @@ void ASTPrinter::printScope(Indented Indent, const Scope &Sc) {
   for (auto &S : Sc.children())
     print(Indent.next(), S);
   OS << Indent << "}\n";
+}
+
+void ASTPrinter::printCondition(Indented Indent, const char *Name,
+                                ASTElement *E) {
+  OS << Indent.next() << Name << (E ? "\n" : ": <empty>\n");
+  if (E) {
+    if (auto *D = llvm::dyn_cast<DeclStmt>(E))
+      print(Indent.next().next(), *D);
+    else if (auto *V = llvm::dyn_cast<VarDecl>(E))
+      print(Indent.next().next(), *V);
+    else if (auto *U = llvm::dyn_cast<UnparsableBlock>(E))
+      print(Indent.next().next(), *U);
+    else
+      print(Indent.next().next(), *llvm::cast<Expr>(E));
+  }
 }
 
 void ASTPrinter::print(Indented Indent, const QualifiedID &Qual) {
@@ -171,15 +187,7 @@ void ASTPrinter::print(Indented Indent, const Stmt &stmt) {
   } else if (auto *If = llvm::dyn_cast<IfStmt>(&stmt)) {
     OS << Indent << "If\n";
     for (auto &B : If->Branches) {
-      if (B.Cond) {
-        OS << Indent.next() << "Condition:\n";
-        if (auto *D = llvm::dyn_cast<DeclStmt>(B.Cond.get()))
-          print(Indent.next().next(), *D);
-        else
-          print(Indent.next().next(), *llvm::cast<Expr>(B.Cond.get()));
-      } else {
-        OS << Indent.next() << "Condition: None\n";
-      }
+      printCondition(Indent, "Condition", B.Cond.get());
       OS << Indent.next() << "Body:\n";
       print(Indent.next().next(), *B.Body);
     }
@@ -189,13 +197,16 @@ void ASTPrinter::print(Indented Indent, const Stmt &stmt) {
       print(Indent.next(), *S);
   } else if (auto *While = llvm::dyn_cast<WhileStmt>(&stmt)) {
     OS << Indent << "WhileStmt:\n";
-    OS << Indent.next() << "Condition:\n";
-    if (auto *D = llvm::dyn_cast<DeclStmt>(While->Cond.get()))
-      print(Indent.next().next(), *D);
-    else
-      print(Indent.next().next(), *llvm::cast<Expr>(While->Cond.get()));
+    printCondition(Indent, "Condition", While->Cond.get());
     OS << Indent.next() << "Body:\n";
     print(Indent.next().next(), *While->Body);
+  } else if (auto *For = llvm::dyn_cast<ForStmt>(&stmt)) {
+    OS << Indent << "ForStmt:\n";
+    printCondition(Indent, "Init", For->Init.get());
+    printCondition(Indent, "Condition", For->Cond.get());
+    printCondition(Indent, "Incr", For->Inc.get());
+    OS << Indent.next() << "Body:\n";
+    print(Indent.next().next(), *For->Body);
   } else {
     llvm_unreachable("TODO: unhandled fuzzy ast node");
   }

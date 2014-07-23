@@ -405,7 +405,7 @@ static std::unique_ptr<VarDecl> parseVarDecl(TokenFilter &TF,
   return VD;
 }
 
-static std::unique_ptr<Stmt> parseDeclStmt(TokenFilter &TF) {
+static std::unique_ptr<Stmt> parseDeclStmt(TokenFilter &TF, bool WithSemi=true) {
   auto Guard = TF.guard();
 
   auto TypeName = parseType(TF, /*WithDecorations=*/false);
@@ -417,7 +417,8 @@ static std::unique_ptr<Stmt> parseDeclStmt(TokenFilter &TF) {
     if (checkKind(TF, tok::semi)) {
       if (Declaration->Decls.empty())
         return {};
-      Declaration->setSemi(TF.next());
+      if (WithSemi)
+        Declaration->setSemi(TF.next());
       Guard.dismiss();
       return std::move(Declaration);
     }
@@ -600,13 +601,35 @@ static std::unique_ptr<Stmt> parseControlFlowBody(TokenFilter &TF) {
   return checkKind(TF, tok::l_brace) ? parseCompoundStmt(TF) : parseAny(TF);
 }
 
-static std::unique_ptr<ASTElement> parseCond(TokenFilter &TF) {
+static std::unique_ptr<ASTElement> parseCond(TokenFilter &TF,
+                                             bool ForLoopInit = false) {
+  if (ForLoopInit)
+    if (auto D = parseDeclStmt(TF, /*WithSemi=*/false))
+      return std::move(D);
   if (auto D = parseVarDecl(TF))
     return std::move(D);
   else if (auto E = parseExpr(TF))
     return std::move(E);
-  else
-    return {};
+
+  auto UB = llvm::make_unique<UnparsableBlock>();
+  int ParenOpen = 1;
+  while (TF.peek()) {
+    if (checkKind(TF, tok::l_paren)) {
+      ++ParenOpen;
+    } else if (checkKind(TF, tok::r_paren)) {
+      if (--ParenOpen == 0) {
+        UB->push_back(TF.next());
+        return std::move(UB);
+      }
+    }
+
+    if (checkKind(TF, tok::l_brace) || checkKind(TF, tok::r_brace) ||
+        checkKind(TF, tok::semi))
+      return std::move(UB);
+
+    UB->push_back(TF.next());
+  }
+  return std::move(UB);
 }
 
 static std::unique_ptr<Stmt> parseControlFlowStmt(TokenFilter &TF) {
@@ -623,9 +646,8 @@ static std::unique_ptr<Stmt> parseControlFlowStmt(TokenFilter &TF) {
     if (!(S->Cond = parseCond(TF)))
       return {};
 
-    if (!checkKind(TF, tok::r_paren))
-      return {};
-    S->setRightParen(TF.next());
+    if (checkKind(TF, tok::r_paren))
+      S->setRightParen(TF.next());
 
     S->Body = parseControlFlowBody(TF);
 
@@ -650,7 +672,7 @@ static std::unique_ptr<Stmt> parseControlFlowStmt(TokenFilter &TF) {
       }
 
       std::unique_ptr<ASTElement> Cond;
-      AnnotatedToken *LPar, *RPar;
+      AnnotatedToken *LPar = nullptr, *RPar = nullptr;
 
       if (!ElseBranch) {
         if (!checkKind(TF, tok::l_paren))
@@ -660,9 +682,8 @@ static std::unique_ptr<Stmt> parseControlFlowStmt(TokenFilter &TF) {
         if (!(Cond = parseCond(TF)))
           return {};
 
-        if (!checkKind(TF, tok::r_paren))
-          return {};
-        RPar = TF.next();
+        if (checkKind(TF, tok::r_paren))
+          RPar = TF.next();
       }
 
       auto Body = parseControlFlowBody(TF);
@@ -671,6 +692,37 @@ static std::unique_ptr<Stmt> parseControlFlowStmt(TokenFilter &TF) {
     }
     Guard.dismiss();
     return std::move(If);
+  }
+
+  if (checkKind(TF, tok::kw_for)) {
+    auto S = llvm::make_unique<ForStmt>();
+
+    S->setKeyword(TF.next());
+    if (!checkKind(TF, tok::l_paren))
+      return {};
+    S->setLeftParen(TF.next());
+
+    if (!checkKind(TF, tok::semi) &&
+        !(S->Init = parseCond(TF, /*ForLoopInit=*/true)))
+      return {};
+    if (!checkKind(TF, tok::semi))
+      return {};
+    S->setSemi1(TF.next());
+    if (!checkKind(TF, tok::semi) && !(S->Cond = parseCond(TF)))
+      return {};
+    if (!checkKind(TF, tok::semi))
+      return {};
+    S->setSemi2(TF.next());
+    if (!checkKind(TF, tok::r_paren) && !(S->Inc = parseExpr(TF)))
+      return {};
+
+    if (checkKind(TF, tok::r_paren))
+      S->setRightParen(TF.next());
+
+    S->Body = parseControlFlowBody(TF);
+
+    Guard.dismiss();
+    return std::move(S);
   }
 
   return {};

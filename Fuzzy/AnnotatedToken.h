@@ -42,12 +42,10 @@ class AnnotatedTokenRef {
 
 public:
   AnnotatedTokenRef(AnnotatedToken *ATok, ASTElement *AstRef) : ATok(ATok) {
-    //assert(ATok);
     if (ATok)
       ATok->setASTReference(AstRef);
   }
   AnnotatedTokenRef(nullptr_t = nullptr) : ATok(nullptr) {}
-  // AnnotatedTokenRef(const AnnotatedTokenRef &) = delete;
   AnnotatedTokenRef(const AnnotatedTokenRef &) = default;
   AnnotatedTokenRef(AnnotatedTokenRef &&) = default;
 
@@ -57,7 +55,6 @@ public:
       ATok->setASTReference(AstRef);
   }
 
-  // AnnotatedTokenRef &operator=(const AnnotatedTokenRef &) = delete;
   AnnotatedTokenRef &operator=(const AnnotatedTokenRef &) = default;
   AnnotatedTokenRef &operator=(AnnotatedTokenRef &&) = default;
 

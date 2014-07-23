@@ -379,14 +379,32 @@ TEST_F(FuzzyParseTest, IfStmt) {
   checkUnparsable("else if (1);");
 }
 
+TEST_F(FuzzyParseTest, IfStmtFuzzy) {
+  checkFirst<IfStmt>({ "if (<!unparsable!>) {}", //
+                       "if (true {}",            //
+                       "if (false)) {}",         //
+                       "if (<!unparsable!>);", });
+}
+
 TEST_F(FuzzyParseTest, WhileStmt) {
-  const char *Tests[] = {
-    "while (true) {}",     // (enforce line break for clang-highlight)
-    "while (0) do_sth();", //
-    "while (int i=0) {}",  //
-  };
-  for (const char *Code : Tests)
-    checkFirst<WhileStmt>(Code);
+  checkFirst<WhileStmt>(
+      { "while (true) {}",     // (enforce line break for clang-highlight)
+        "while (0) do_sth();", //
+        "while (int i=0) {}",  //
+      });
+}
+
+TEST_F(FuzzyParseTest, ForStmt) {
+  checkFirst<ForStmt>({ "for (;;) {}",                 //
+                        "for (;;);",                   //
+                        "for (int i=0;;) {}",          //
+                        "for (T x=0,y=3;;) {}",        //
+                        "for (T x,y,z;;) {}",          //
+                        "for (int i=0;int j=0;) {}",   //
+                        "for (int i=0;i<10;i=i+1) {}", //
+                        "for (;int j;);",              //
+                        "for (;;i=i+1) {}",            //
+  });
 }
 
 TEST_F(FuzzyParseTest, TemplateDecl) {
