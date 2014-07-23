@@ -123,7 +123,7 @@ void highlight(std::unique_ptr<llvm::MemoryBuffer> Source,
 
   if (DumpAST) {
     for (auto &S : TU.children())
-      fuzzy::printAST(llvm::outs(), S, SourceMgr);
+      fuzzy::printAST(llvm::dbgs(), S, SourceMgr);
     return;
   }
 
@@ -167,9 +167,9 @@ void highlight(std::unique_ptr<llvm::MemoryBuffer> Source,
         (ATok.ASTReference &&
          (llvm::isa<fuzzy::Type>(ATok.ASTReference) ||
           llvm::isa<fuzzy::Type::Decoration>(ATok.ASTReference) ||
-          (llvm::isa<fuzzy::ClassDecl>(ATok.ASTReference) &&
-           ATok.Tok.getKind() == tok::identifier))
-          )) {
+          ((llvm::isa<fuzzy::ClassDecl>(ATok.ASTReference) ||
+            llvm::isa<fuzzy::TemplateParameterType>(ATok.ASTReference)) &&
+           ATok.Tok.getKind() == tok::identifier)))) {
       ThisTok.setKind(tok::annot_typename);
     }
 

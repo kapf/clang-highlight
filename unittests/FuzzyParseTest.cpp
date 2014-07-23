@@ -389,5 +389,23 @@ TEST_F(FuzzyParseTest, WhileStmt) {
     checkFirst<WhileStmt>(Code);
 }
 
+TEST_F(FuzzyParseTest, TemplateDecl) {
+  const char *Tests[] = {
+    "template <typename T> void f();",
+    "template <class T> void f();",
+    "template <class T=int> void f();",
+    "template <class T=const int****> void f();",
+    //"template <class T=int****const> void f();",
+    "template <typename T, class X, typename F> void f() {}",
+    "template <typename T> struct C;",
+    "template <int I> struct C;",
+    "template <int I=0> void f();",
+    "template <I X=3> void f();",
+    "template <int I=0, typename T=int, I X=3> void f();",
+  };
+  for (const char *Code : Tests)
+    checkFirst<TemplateDecl>(Code);
+}
+
 } // end namespace fuzzy
 } // end namespace clang

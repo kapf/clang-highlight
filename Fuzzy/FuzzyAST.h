@@ -36,6 +36,7 @@ public:
     NoASTElementClass = 0,
     UnparsableBlockClass,
     TypeClass,
+    TemplateDeclClass,
     TypeDecorationClass,
     VarInitializationClass,
     VarDeclClass,
@@ -59,6 +60,7 @@ public:
     ClassDeclClass,
     NamespaceDeclClass,
     FunctionDeclClass,
+    TemplateParameterTypeClass,
   };
 
   ASTElementClass getASTClass() const { return sClass; }
@@ -87,25 +89,26 @@ inline Expr::~Expr() {}
 
 class Type;
 
+class TypeOrExpression {
+  std::unique_ptr<ASTElement> Ptr;
+
+public:
+  TypeOrExpression(std::unique_ptr<Type> T);
+  TypeOrExpression(std::unique_ptr<Expr> E) : Ptr(std::move(E)) {}
+  TypeOrExpression(const TypeOrExpression &) = delete;
+  TypeOrExpression &operator=(const TypeOrExpression &) = delete;
+  TypeOrExpression(TypeOrExpression &&O) = default;
+  TypeOrExpression &operator=(TypeOrExpression &&O) = default;
+
+  bool isType() const {
+    assert(Ptr);
+    return isa<Type>(Ptr.get());
+  }
+  Type &asType() { return *cast<Type>(Ptr.get()); }
+  Expr &asExpr() { return *cast<Expr>(Ptr.get()); }
+};
+
 struct QualifiedID {
-  class TypeOrExpression {
-    std::unique_ptr<ASTElement> Ptr;
-
-  public:
-    TypeOrExpression(std::unique_ptr<Type> T);
-    TypeOrExpression(std::unique_ptr<Expr> E) : Ptr(std::move(E)) {}
-    TypeOrExpression(const TypeOrExpression &) = delete;
-    TypeOrExpression &operator=(const TypeOrExpression &) = delete;
-    TypeOrExpression(TypeOrExpression &&O) = default;
-    TypeOrExpression &operator=(TypeOrExpression &&O) = default;
-
-    bool isType() const {
-      assert(Ptr);
-      return isa<Type>(Ptr.get());
-    }
-    Type &asType() { return *cast<Type>(Ptr.get()); }
-    Expr &asExpr() { return *cast<Expr>(Ptr.get()); }
-  };
 
   struct TemplateArguments {
     llvm::SmallVector<TypeOrExpression, 2> Args;
@@ -420,7 +423,7 @@ struct Type : ASTElement {
   }
 };
 
-inline QualifiedID::TypeOrExpression::TypeOrExpression(std::unique_ptr<Type> T)
+inline TypeOrExpression::TypeOrExpression(std::unique_ptr<Type> T)
     : Ptr(std::move(T)) {}
 
 /// Initialization of a variable
@@ -489,7 +492,64 @@ struct DeclStmt : LineStmt {
 
 class CompoundStmt;
 
-struct FunctionDecl : Stmt { // TODO: Not a real statement
+struct TemplateParameterType : ASTElement {
+  TemplateParameterType() : ASTElement(TemplateParameterTypeClass) {}
+  enum {
+    KEYWORD,
+    NAME,
+    EQUAL,
+    END_EXPR
+  };
+  AnnotatedTokenRef Refs[END_EXPR];
+  std::unique_ptr<Type> DefaultType;
+
+  void setRef(int Index, AnnotatedToken *Tok) {
+    Refs[Index] = AnnotatedTokenRef(Tok, this);
+  }
+  void setKeyword(AnnotatedToken *Tok) { setRef(KEYWORD, Tok); }
+  void setName(AnnotatedToken *Tok) { setRef(NAME, Tok); }
+  void setEqual(AnnotatedToken *Tok) { setRef(EQUAL, Tok); }
+
+  static bool classof(const ASTElement *T) {
+    return T->getASTClass() == TemplateParameterTypeClass;
+  }
+};
+
+struct TemplateDecl : Stmt {
+  TemplateDecl() : Stmt(TemplateDeclClass) {}
+
+  std::unique_ptr<Stmt> Templated;
+  enum {
+    KEYWORD,
+    LEFT,
+    RIGHT,
+    END_EXPR
+  };
+  AnnotatedTokenRef Refs[END_EXPR];
+
+  llvm::SmallVector<std::unique_ptr<ASTElement>, 2> Params;
+  llvm::SmallVector<AnnotatedTokenRef, 1> Commas;
+
+  void addParam(std::unique_ptr<ASTElement> P) {
+    Params.push_back(std::move(P));
+  }
+  void addComma(AnnotatedToken *Tok) {
+    Commas.push_back(AnnotatedTokenRef(Tok, this));
+  }
+
+  void setRef(int Index, AnnotatedToken *Tok) {
+    Refs[Index] = AnnotatedTokenRef(Tok, this);
+  }
+  void setKeyword(AnnotatedToken *Tok) { setRef(KEYWORD, Tok); }
+  void setLess(AnnotatedToken *Tok) { setRef(LEFT, Tok); }
+  void setGreater(AnnotatedToken *Tok) { setRef(RIGHT, Tok); }
+
+  static bool classof(const ASTElement *T) {
+    return T->getASTClass() == TemplateDeclClass;
+  }
+};
+
+struct FunctionDecl : Stmt {
   FunctionDecl() : Stmt(FunctionDeclClass) {}
   enum {
     LEFT,
