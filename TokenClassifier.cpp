@@ -72,12 +72,11 @@ TokenClass convertTokenKindToTokenClass(tok::TokenKind TK) {
   return TokenClass::Other;
 }
 
-void highlight(std::unique_ptr<llvm::MemoryBuffer> Source,
-               std::unique_ptr<OutputWriter> OW, ParserHints PH, bool DumpAST) {
+void highlight(std::unique_ptr<llvm::MemoryBuffer> Source, StringRef FileName,
+               std::unique_ptr<OutputWriter> OW, bool IdentifiersOnly,
+               bool DumpAST) {
   using namespace llvm;
   using namespace clang;
-
-  StringRef FileName = PH.FileName;
 
   FileManager Files((FileSystemOptions()));
   DiagnosticsEngine Diagnostics(
@@ -161,18 +160,16 @@ void highlight(std::unique_ptr<llvm::MemoryBuffer> Source,
       ThisTok.setKind(Info.getTokenID());
     }
 
-    unsigned ThisLoc = SourceMgr.getFileOffset(ThisTok.getLocation());
-    if (std::binary_search(PH.TypeOffsets.begin(), PH.TypeOffsets.end(),
-                           ThisLoc) ||
-        (ATok.ASTReference &&
-         (llvm::isa<fuzzy::Type>(ATok.ASTReference) ||
-          llvm::isa<fuzzy::Type::Decoration>(ATok.ASTReference) ||
-          ((llvm::isa<fuzzy::ClassDecl>(ATok.ASTReference) ||
-            llvm::isa<fuzzy::TemplateParameterType>(ATok.ASTReference)) &&
-           ATok.Tok.getKind() == tok::identifier)))) {
-      ThisTok.setKind(tok::annot_typename);
+    if (!IdentifiersOnly || ATok.Tok.getKind() == tok::identifier) {
+      if (ATok.ASTReference &&
+          (llvm::isa<fuzzy::Type>(ATok.ASTReference) ||
+           llvm::isa<fuzzy::Type::Decoration>(ATok.ASTReference) ||
+           ((llvm::isa<fuzzy::ClassDecl>(ATok.ASTReference) ||
+             llvm::isa<fuzzy::TemplateParameterType>(ATok.ASTReference)) &&
+            ATok.Tok.getKind() == tok::identifier))) {
+        ThisTok.setKind(tok::annot_typename);
+      }
     }
-
     LastTok = ThisTok;
     LastTokenStart = ThisTokenStart;
   }

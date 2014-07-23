@@ -6,11 +6,9 @@ add_clang_executable(clang-highlight
   ClangHighlight.cpp
   TokenClassifier.cpp
   OutputWriter.cpp
-  ParserHintCollector.cpp
   )
 
 target_link_libraries(clang-highlight
-  # clangTooling
   clangAST
   clangFuzzy
   )

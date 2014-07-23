@@ -30,15 +30,14 @@ cl::OptionCategory &getClangHighlightCategory() {
   return ClangHighlightCategory;
 }
 
-static cl::opt<bool>
-UseParser("use-parser",
-          cl::desc("Use the clang parser to highlight the source file."),
-          cl::cat(ClangHighlightCategory));
+static cl::opt<bool> IdentifiersOnly(
+    "identifiers-only",
+    cl::desc("Highlight identifiers only.  E.g. don't highlight the '*' "
+             "in \"type *i;\""),
+    cl::cat(ClangHighlightCategory));
 
-static cl::opt<bool>
-DumpAST("dump-ast",
-          cl::desc("Print the fuzzy AST."),
-          cl::cat(ClangHighlightCategory));
+static cl::opt<bool> DumpAST("dump-ast", cl::desc("Print the fuzzy AST."),
+                             cl::cat(ClangHighlightCategory));
 
 static cl::opt<OutputFormat> OutputFormatFlag(
     cl::desc("Output format for the highlighted code."),
@@ -58,16 +57,15 @@ static void PrintVersion() {
 }
 
 static bool parserHighlight(StringRef File, OutputFormat Format,
-                            bool UseParser, bool DumpAST) {
-  ParserHints Hints = UseParser ? collectParserHints(File) : ParserHints(File);
-
+                            bool IdentifiersOnly, bool DumpAST) {
   auto Source = llvm::MemoryBuffer::getFileOrSTDIN(File);
   if (std::error_code err = Source.getError()) {
     llvm::errs() << err.message() << '\n';
     return true;
   }
 
-  highlight(std::move(*Source), makeOutputWriter(Format), Hints, DumpAST);
+  highlight(std::move(*Source), File, makeOutputWriter(Format), IdentifiersOnly,
+            DumpAST);
   return false;
 }
 
@@ -91,7 +89,8 @@ int main(int argc, const char **argv) {
 
   bool Error = false;
 
-  Error |= parserHighlight(FileName, OutputFormatFlag, UseParser, DumpAST);
+  Error |=
+      parserHighlight(FileName, OutputFormatFlag, IdentifiersOnly, DumpAST);
 
   return Error ? 1 : 0;
 }

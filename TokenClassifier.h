@@ -22,23 +22,9 @@ namespace highlight {
 
 class OutputWriter;
 
-struct ParserHints {
-  ParserHints() = default;
-  ParserHints(llvm::StringRef FileName) : FileName(FileName) {}
-  llvm::StringRef FileName;
-  std::vector<unsigned> TypeOffsets;
-  void normalize() {
-    std::sort(TypeOffsets.begin(), TypeOffsets.end());
-    TypeOffsets.erase(std::unique(TypeOffsets.begin(), TypeOffsets.end()),
-                      TypeOffsets.end());
-  }
-};
-
-ParserHints collectParserHints(llvm::StringRef SourceFile);
 void highlight(std::unique_ptr<llvm::MemoryBuffer> Source,
-               std::unique_ptr<OutputWriter> OW,
-               ParserHints Hints = ParserHints(),
-               bool DumpAST=false);
+               llvm::StringRef FileName, std::unique_ptr<OutputWriter> OW,
+               bool IdentifiersOnly = false, bool DumpAST = false);
 
 } // end namespace highlight
 } // end namespace clang

@@ -405,7 +405,8 @@ static std::unique_ptr<VarDecl> parseVarDecl(TokenFilter &TF,
   return VD;
 }
 
-static std::unique_ptr<Stmt> parseDeclStmt(TokenFilter &TF, bool WithSemi=true) {
+static std::unique_ptr<Stmt> parseDeclStmt(TokenFilter &TF,
+                                           bool WithSemi = true) {
   auto Guard = TF.guard();
 
   auto TypeName = parseType(TF, /*WithDecorations=*/false);
