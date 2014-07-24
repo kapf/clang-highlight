@@ -40,6 +40,7 @@ struct ASTPrinter {
   void print(Indented Indent, const Expr &EXP);
   void print(Indented Indent, const Stmt &stmt);
   void print(Indented Indent, const QualifiedID &Qual);
+  void print(Indented Indent, const PPDirective &Qual);
   void printScope(Indented Indent, const Scope &Sc);
   void printCondition(Indented Indent, const char *Name, ASTElement *E);
 };
@@ -119,7 +120,7 @@ void ASTPrinter::print(Indented Indent, const Expr &EXP) {
     OS << Indent << Lit->Tok->getText(SourceMgr) << '\n';
   } else if (auto *Call = llvm::dyn_cast<CallExpr>(&EXP)) {
     OS << Indent << "call expr '";
-    print(Indent.next(), Call->FunctionName->Qualifier);
+    print(Indent.next(), Call->Qualifier);
     OS << "'\n";
     for (auto &Arg : Call->Args)
       print(Indent.next(), *Arg);
@@ -212,10 +213,47 @@ void ASTPrinter::print(Indented Indent, const Stmt &stmt) {
   }
 }
 
+void ASTPrinter::print(Indented Indent, const PPDirective &PP) {
+  if (auto *Inc = llvm::dyn_cast<PPInclude>(&PP)) {
+    OS << Indent << "Include Directive: '";
+    if (Inc->Path)
+      for (auto &S : Inc->Path->Refs)
+        OS << S->getText(SourceMgr);
+    OS << "'\n";
+  } else if (auto *If = llvm::dyn_cast<PPIf>(&PP)) {
+    OS << Indent << "Preprocessor If/Else/Elif:\n";
+    if (If->Cond) {
+      if (auto *E = dyn_cast<Expr>(If->Cond.get()))
+        print(Indent.next(), *E);
+      else
+        print(Indent.next(), *cast<UnparsableBlock>(If->Cond.get()));
+    }
+  } else if (auto *UP = llvm::dyn_cast<UnparsablePP>(&PP)) {
+    OS << Indent << "Unparsable PP:\n";
+    for (auto R : UP->Refs)
+      OS << Indent.next() << R->getText(SourceMgr) << '\n';
+  } else {
+    llvm_unreachable("TODO: unhandled preprocessor directive");
+  }
+}
+
 void printAST(llvm::raw_ostream &OS, const Stmt &Root,
               const SourceManager &SourceMgr) {
   ASTPrinter AP{ SourceMgr, OS };
   AP.print(Indented(0), Root);
+}
+
+void printAST(llvm::raw_ostream &OS, const TranslationUnit &TU,
+              const SourceManager &SourceMgr) {
+  ASTPrinter AP{ SourceMgr, OS };
+  for (auto &P : TU.PPDirectives) {
+    assert(P);
+    AP.print(Indented(0), *P);
+  }
+  for (auto &S : TU.Body) {
+    assert(S);
+    AP.print(Indented(0), *S);
+  }
 }
 
 } // end namespace fuzzy

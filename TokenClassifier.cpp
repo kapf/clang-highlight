@@ -101,6 +101,12 @@ void highlight(std::unique_ptr<llvm::MemoryBuffer> Source, StringRef FileName,
   for (;;) {
     Token TmpTok;
     Lex.LexFromRawLexer(TmpTok);
+
+    if (TmpTok.getKind() == tok::hash && TmpTok.isAtStartOfLine())
+      Lex.setParsingPreprocessorDirective(true);
+    if (TmpTok.getKind() == tok::eod)
+      Lex.setParsingPreprocessorDirective(false);
+
     AllTokens.push_back(fuzzy::AnnotatedToken(TmpTok));
     Token &ThisTok = AllTokens.back().Tok;
 
@@ -121,53 +127,53 @@ void highlight(std::unique_ptr<llvm::MemoryBuffer> Source, StringRef FileName,
   auto TU = fuzzy::fuzzyparse(&*AllTokens.begin(), &*AllTokens.end());
 
   if (DumpAST) {
-    for (auto &S : TU.children())
-      fuzzy::printAST(llvm::dbgs(), S, SourceMgr);
+    fuzzy::printAST(llvm::dbgs(), TU, SourceMgr);
     return;
   }
 
-  bool PPMode = false;
-  TokenClass Class = TokenClass::Other;
   const char *LastTokenStart = nullptr, *ThisTokenStart = nullptr;
   Token LastTok;
+  TokenClass Class = TokenClass::NONE;
   for (auto &ATok : AllTokens) {
     Token &ThisTok = ATok.Tok;
 
     ThisTokenStart = SourceMgr.getCharacterData(ThisTok.getLocation());
     if (LastTokenStart) {
-      if (Class == TokenClass::Other)
+      if (Class == TokenClass::NONE)
         Class = convertTokenKindToTokenClass(LastTok.getKind());
       OW->writeToken(StringRef(LastTokenStart, ThisTokenStart - LastTokenStart),
                      Class);
     }
 
-    Class = TokenClass::Other;
-
-    if (ThisTok.is(tok::hash))
-      PPMode = true;
-    if (PPMode) {
-      Class = TokenClass::Preprocessor;
-      if (ThisTok.is(tok::identifier))
-        PPMode = false;
-    }
+    Class = TokenClass::NONE;
 
     StringRef TokenText(SourceMgr.getCharacterData(ThisTok.getLocation()),
                         ThisTok.getLength());
 
-    if (ThisTok.is(tok::raw_identifier)) {
-      IdentifierInfo &Info = IdentTable.get(TokenText);
-      ThisTok.setIdentifierInfo(&Info);
-      ThisTok.setKind(Info.getTokenID());
-    }
-
-    if (!IdentifiersOnly || ATok.Tok.getKind() == tok::identifier) {
-      if (ATok.ASTReference &&
-          (llvm::isa<fuzzy::Type>(ATok.ASTReference) ||
-           llvm::isa<fuzzy::Type::Decoration>(ATok.ASTReference) ||
-           ((llvm::isa<fuzzy::ClassDecl>(ATok.ASTReference) ||
-             llvm::isa<fuzzy::TemplateParameterType>(ATok.ASTReference)) &&
-            ATok.Tok.getKind() == tok::identifier))) {
-        ThisTok.setKind(tok::annot_typename);
+    if (ATok.ASTReference) {
+      if (!IdentifiersOnly || ATok.Tok.getKind() == tok::identifier) {
+        if (llvm::isa<fuzzy::Type>(ATok.ASTReference) ||
+            llvm::isa<fuzzy::Type::Decoration>(ATok.ASTReference) ||
+            ((llvm::isa<fuzzy::ClassDecl>(ATok.ASTReference) ||
+              llvm::isa<fuzzy::TemplateParameterType>(ATok.ASTReference)) &&
+             ATok.Tok.getKind() == tok::identifier)) {
+          Class = TokenClass::Type;
+          ThisTok.setKind(tok::annot_typename);
+        }
+      }
+      if (isa<fuzzy::PPString>(ATok.ASTReference)) {
+        Class = TokenClass::String;
+      }
+      if (isa<fuzzy::PPDirective>(ATok.ASTReference)) {
+        Class = TokenClass::Preprocessor;
+      }
+      if (isa<fuzzy::DeclRefExpr>(ATok.ASTReference)) {
+        Class = TokenClass::Variable;
+      }
+      if (ATok.Tok.getKind() == tok::identifier &&
+          (isa<fuzzy::CallExpr>(ATok.ASTReference) ||
+           isa<fuzzy::FunctionDecl>(ATok.ASTReference))) {
+        Class = TokenClass::Function;
       }
     }
     LastTok = ThisTok;

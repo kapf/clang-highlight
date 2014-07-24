@@ -8,8 +8,9 @@
 //===----------------------------------------------------------------------===//
 #include "llvm/Support/Debug.h"
 #include "llvm/ADT/STLExtras.h"
-#include "FuzzyAST.h"
+#include "clang/Basic/IdentifierTable.h"
 #include "clang/Basic/OperatorPrecedence.h"
+#include "FuzzyAST.h"
 
 using namespace clang;
 
@@ -17,16 +18,33 @@ namespace clang {
 namespace fuzzy {
 
 namespace {
-struct TokenFilter {
+template <bool SkipPreprocessor> class BasicTokenFilter {
   AnnotatedToken *First, *Last;
-  TokenFilter(AnnotatedToken *First, AnnotatedToken *Last)
-      : First(First), Last(Last) {}
+
+  void skipWhitespaces() {
+    for (;;) {
+      while (First != Last && (First->Tok.getKind() == tok::unknown ||
+                               First->Tok.getKind() == tok::comment))
+        ++First;
+
+      if (SkipPreprocessor && First->Tok.getKind() == tok::hash &&
+          First->Tok.isAtStartOfLine())
+        while (First != Last && First++->Tok.getKind() != tok::eod)
+          ;
+      else
+        break;
+    }
+  }
+
+public:
+  BasicTokenFilter(AnnotatedToken *First, AnnotatedToken *Last)
+      : First(First), Last(Last) {
+    skipWhitespaces();
+  }
 
   AnnotatedToken *next() {
     auto Ret = First++;
-    while (First != Last && (First->Tok.getKind() == tok::unknown ||
-                             First->Tok.getKind() == tok::comment))
-      ++First;
+    skipWhitespaces();
     if (First == Last || First->Tok.getKind() == tok::eof)
       First = Last = 0;
     assert(Ret->Tok.getKind() != tok::raw_identifier);
@@ -34,7 +52,7 @@ struct TokenFilter {
   }
 
   class TokenFilterState {
-    friend class TokenFilter;
+    friend class BasicTokenFilter;
     TokenFilterState(AnnotatedToken *First, AnnotatedToken *Last)
         : First(First), Last(Last) {}
     AnnotatedToken *First, *Last;
@@ -46,9 +64,17 @@ struct TokenFilter {
     Last = State.Last;
   }
 
+  BasicTokenFilter<true> rangeAsTokenFilter(TokenFilterState From,
+                                            TokenFilterState To) const {
+    assert(From.Last == To.Last);
+    assert(From.First <= To.First);
+    assert(To.First < To.Last);
+    return BasicTokenFilter<true>(From.First, To.First + 1);
+  }
+
   class TokenFilterGuard {
-    friend class TokenFilter;
-    TokenFilterGuard(TokenFilter *TF, TokenFilterState State)
+    friend class BasicTokenFilter;
+    TokenFilterGuard(BasicTokenFilter *TF, TokenFilterState State)
         : TF(TF), State(State) {}
 
   public:
@@ -57,16 +83,19 @@ struct TokenFilter {
         TF->rewind(State);
     }
     void dismiss() { TF = nullptr; }
-    TokenFilter *TF;
+    BasicTokenFilter *TF;
     TokenFilterState State;
   };
   TokenFilterGuard guard() { return TokenFilterGuard(this, mark()); }
 
   AnnotatedToken *peek() { return First; }
 };
+using TokenFilter = BasicTokenFilter<true>;
+using RawTokenFilter = BasicTokenFilter<false>;
 } // end anonymous namespace
 
-static bool checkKind(TokenFilter &TF, tok::TokenKind Kind) {
+template <bool B>
+static bool checkKind(BasicTokenFilter<B> &TF, tok::TokenKind Kind) {
   return TF.peek() && TF.peek()->Tok.getKind() == Kind;
 }
 
@@ -87,7 +116,10 @@ static std::unique_ptr<Expr> parseUnaryOperator(TokenFilter &TF) {
       checkKind(TF, tok::star) || checkKind(TF, tok::amp) ||
       checkKind(TF, tok::plusplus) || checkKind(TF, tok::minusminus)) {
     AnnotatedToken *Op = TF.next();
-    return llvm::make_unique<UnaryOperator>(Op, parseUnaryOperator(TF));
+    auto Operand = parseUnaryOperator(TF);
+    if (!Operand)
+      return {};
+    return llvm::make_unique<UnaryOperator>(Op, std::move(Operand));
   }
 
   return parseExpr(TF, PrecedenceArrowAndPeriod);
@@ -231,7 +263,10 @@ static std::unique_ptr<Expr> parseExpr(TokenFilter &TF, int Precedence,
         return {};
       if (checkKind(TF, tok::l_paren))
         return parseCallExpr(TF, std::move(DR));
-      return std::move(DR);
+      std::unique_ptr<Expr> Ret = std::move(DR);
+      while (checkKind(TF, tok::plusplus) || checkKind(TF, tok::minusminus))
+        Ret = llvm::make_unique<UnaryOperator>(TF.next(), std::move(Ret));
+      return std::move(Ret);
     }
 
     return {};
@@ -261,6 +296,7 @@ static std::unique_ptr<Expr> parseExpr(TokenFilter &TF, int Precedence,
     auto RightExpr = parseExpr(TF, Precedence + 1, StopAtGreater);
     if (!RightExpr)
       return {};
+
     LeftExpr = llvm::make_unique<BinaryOperator>(
         std::move(LeftExpr), std::move(RightExpr), OperatorTok);
   }
@@ -569,6 +605,82 @@ static std::unique_ptr<Stmt> parseLabelStmt(TokenFilter &TF) {
   return llvm::make_unique<LabelStmt>(LabelName, TF.next());
 }
 
+static std::unique_ptr<PPInclude> parseIncludeDirective(RawTokenFilter &TF) {
+  if (!checkKind(TF, tok::hash))
+    return {};
+  auto Guard = TF.guard();
+
+  auto *HashTok = TF.next();
+  if (TF.peek()->Tok.getIdentifierInfo()->getPPKeywordID() != tok::pp_include)
+    return {};
+
+  auto Inc = llvm::make_unique<PPInclude>();
+  Inc->setHash(HashTok);
+  Inc->setInclude(TF.next());
+  Inc->Path = llvm::make_unique<PPString>();
+
+  while (TF.peek() && !checkKind(TF, tok::eod)) {
+    Inc->Path->addToken(TF.next());
+  }
+  Inc->setEOD(TF.next());
+  return Inc;
+}
+
+static std::unique_ptr<PPIf> parsePPIf(RawTokenFilter &TF) {
+  if (!checkKind(TF, tok::hash))
+    return {};
+  auto Guard = TF.guard();
+
+  auto *HashTok = TF.next();
+
+  if (TF.peek()->Tok.getIdentifierInfo()->getPPKeywordID() != tok::pp_else &&
+      TF.peek()->Tok.getIdentifierInfo()->getPPKeywordID() != tok::pp_if &&
+      TF.peek()->Tok.getIdentifierInfo()->getPPKeywordID() != tok::pp_elif)
+    return {};
+
+  auto If = llvm::make_unique<PPIf>();
+  If->setHash(HashTok);
+  If->setKeyword(TF.next());
+
+  auto Start = TF.mark();
+
+  if (!checkKind(TF, tok::eod)) {
+    while (!checkKind(TF, tok::eod))
+      TF.next();
+    assert(checkKind(TF, tok::eod));
+
+    TokenFilter SubTF = TF.rangeAsTokenFilter(Start, TF.mark());
+
+    auto SubStart = SubTF.mark();
+    std::unique_ptr<ASTElement> Cond;
+    if ((Cond = parseExpr(SubTF)) && checkKind(TF, tok::eod))
+      If->Cond = std::move(Cond);
+    else {
+      SubTF.rewind(SubStart);
+      auto UB = llvm::make_unique<UnparsableBlock>();
+      while (!checkKind(SubTF, tok::eod))
+        UB->push_back(SubTF.next());
+      If->Cond = std::move(UB);
+    }
+  }
+
+  assert(checkKind(TF, tok::eod));
+  If->setEOD(TF.next());
+  return If;
+}
+
+static std::unique_ptr<PPDirective> parsePPDirective(RawTokenFilter &TF) {
+  assert(checkKind(TF, tok::hash));
+  if (auto I = parseIncludeDirective(TF))
+    return std::move(I);
+  if (auto D = parsePPIf(TF))
+    return std::move(D);
+  auto UP = llvm::make_unique<UnparsablePP>();
+  while (!checkKind(TF, tok::eod))
+    UP->push_back(TF.next());
+  return std::move(UP);
+}
+
 static std::unique_ptr<Stmt> parseAny(TokenFilter &TF,
                                       bool SkipUnparsable = true,
                                       bool NameOptional = false);
@@ -607,9 +719,16 @@ static std::unique_ptr<ASTElement> parseCond(TokenFilter &TF,
   if (ForLoopInit)
     if (auto D = parseDeclStmt(TF, /*WithSemi=*/false))
       return std::move(D);
-  if (auto D = parseVarDecl(TF))
-    return std::move(D);
-  else if (auto E = parseExpr(TF))
+  {
+    auto Guard = TF.guard();
+    if (auto D = parseVarDecl(TF)) {
+      if (checkKind(TF, tok::r_paren)) {
+        Guard.dismiss();
+        return std::move(D);
+      }
+    }
+  }
+  if (auto E = parseExpr(TF))
     return std::move(E);
 
   auto UB = llvm::make_unique<UnparsableBlock>();
@@ -928,9 +1047,20 @@ static std::unique_ptr<Stmt> parseAny(TokenFilter &TF, bool SkipUnparsable,
 
 TranslationUnit fuzzyparse(AnnotatedToken *first, AnnotatedToken *last) {
   TranslationUnit TU;
-  TokenFilter TF(first, last);
-  while (TF.peek())
-    TU.addStmt(parseAny(TF));
+  {
+    BasicTokenFilter<false> TF(first, last);
+    while (TF.peek()) {
+      if (TF.peek()->Tok.getKind() == tok::hash &&
+          TF.peek()->Tok.isAtStartOfLine())
+        TU.addPPDirective(parsePPDirective(TF));
+      TF.next();
+    }
+  }
+  {
+    TokenFilter TF(first, last);
+    while (TF.peek())
+      TU.addStmt(parseAny(TF));
+  }
   return TU;
 }
 

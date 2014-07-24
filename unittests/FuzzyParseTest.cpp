@@ -79,6 +79,12 @@ protected:
       for (;;) {
         Token TmpTok;
         Lex.LexFromRawLexer(TmpTok);
+
+        if (TmpTok.getKind() == tok::hash && TmpTok.isAtStartOfLine())
+          Lex.setParsingPreprocessorDirective(true);
+        if (TmpTok.getKind() == tok::eod)
+          Lex.setParsingPreprocessorDirective(false);
+
         Tokens.push_back(fuzzy::AnnotatedToken(TmpTok));
         Token &ThisTok = Tokens.back().Tok;
 
@@ -153,6 +159,19 @@ protected:
     EXPECT_TRUE(llvm::isa<T>(Parsed.TU.Body[0].get()));
   }
 
+  template <typename F> void checkFirstPPOn(StringRef Code, F &&f) {
+    ParseResult Parsed(Code);
+    if (Parsed.TU.PPDirectives.size() == 0) {
+      dump(Parsed, Code);
+      EXPECT_TRUE(Parsed.TU.PPDirectives.size() > 0);
+      return;
+    }
+    if (!f(*Parsed.TU.PPDirectives[0], false)) {
+      dump(Parsed, Code);
+      EXPECT_TRUE(f(*Parsed.TU.PPDirectives[0], true));
+    }
+  }
+
   template <typename F> void checkFirstOn(StringRef Code, F &&f) {
     ParseResult Parsed(Code);
     if (Parsed.TU.children().size() == 0) {
@@ -179,6 +198,21 @@ protected:
   void checkFirst(std::initializer_list<const char *> Codes) {
     for (const char *C : Codes)
       checkFirst<T>(C);
+  }
+
+  template <typename T> void checkFirstPP(StringRef Code) {
+    checkFirstPPOn(Code, [&](const PPDirective &P, bool Abort) {
+      if (Abort)
+        EXPECT_TRUE(llvm::isa<T>(P));
+      else
+        return llvm::isa<T>(P);
+      return true;
+    });
+  }
+  template <typename T>
+  void checkFirstPP(std::initializer_list<const char *> Codes) {
+    for (const char *C : Codes)
+      checkFirstPP<T>(C);
   }
 };
 
@@ -234,6 +268,7 @@ TEST_F(FuzzyParseTest, DeclStmtTest) {
              checkTypeSeq<Type, Type, Type, Type, Type, VarDecl, DeclStmt>());
 
   checkUnparsable("int 1=2;");
+  checkUnparsable("1 + !(unparsable!!!);");
 }
 
 TEST_F(FuzzyParseTest, ExprLineStmtTest) {
@@ -285,11 +320,10 @@ TEST_F(FuzzyParseTest, QualifiedIDs) {
   checkToplevel<DeclStmt>("n::n::n::n::n::a<n::b<c<d<n::n::e,f>,g<h> > > > g;");
   checkToplevel<DeclStmt>("a::b<c::d> ***e=f::g<1>*h::i<2,j>(::k::l);");
   checkToplevel<DeclStmt>("auto x = llvm::make_unique<int>(0);");
-  checkParse(
-      "auto x = llvm::make_unique<int>(0);",
-      checkTypeSeq<Type, VarDecl, VarInitialization, DeclRefExpr, DeclRefExpr,
-                   DeclRefExpr, DeclRefExpr, Type, DeclRefExpr, CallExpr,
-                   LiteralConstant, CallExpr, DeclStmt>());
+  checkParse("auto x = llvm::make_unique<int>(0);",
+             checkTypeSeq<Type, VarDecl, VarInitialization, CallExpr, CallExpr,
+                          CallExpr, CallExpr, Type, CallExpr, CallExpr,
+                          LiteralConstant, CallExpr, DeclStmt>());
   checkToplevel<ExprLineStmt>("n::f(a::b<x>());");
   checkToplevel<ExprLineStmt>("n::f<a,1,2>(a::b<2*3>());");
   checkToplevel<ExprLineStmt>("t<1+b>();");
@@ -423,6 +457,25 @@ TEST_F(FuzzyParseTest, TemplateDecl) {
   };
   for (const char *Code : Tests)
     checkFirst<TemplateDecl>(Code);
+}
+
+TEST_F(FuzzyParseTest, PPIf) {
+  checkFirstPP<PPIf>({ "#if 1",             //
+                       "#else",             //
+                       "#elif 1",           //
+                       "#  if unparsable!", //
+                       "#else EXPR",        //
+                       "#elif 1&1+1*3+f(3)", });
+}
+
+TEST_F(FuzzyParseTest, PPInclude) {
+  checkFirstPP<PPInclude>({ "#include <algorithm>",  //
+                            "#include \"header.h\"", //
+                            "#include \"\"",         //
+                            "#include <>",           //
+                            "# /*comment*/  include <fancy/path!/???.h_>",
+                            // " /*comment*/ # /*comment*/ include <x>",
+                            "# include \"fancy/path!/???.h_\"", });
 }
 
 } // end namespace fuzzy

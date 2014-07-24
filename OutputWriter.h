@@ -24,8 +24,10 @@ enum class OutputFormat {
 };
 
 enum class TokenClass {
+  NONE,
   Type,
   Variable,
+  Function,
   Namespace,
   Keyword,
   Comment,

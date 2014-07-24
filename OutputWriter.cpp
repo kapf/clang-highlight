@@ -47,6 +47,8 @@ static StdoutFormatInfo getFormatInfo(TokenClass Class) {
   case TokenClass::String:
   case TokenClass::Char:
     return { raw_ostream::MAGENTA };
+  case TokenClass::Function:
+    return { raw_ostream::BLACK, true };
   default:
     return { raw_ostream::BLACK };
   }
@@ -58,9 +60,9 @@ static const char *getSpanStyle(TokenClass Class) {
   case TokenClass::Type:
     return "color:green";
   case TokenClass::Keyword:
-    return { "color:blue" };
+    return "color:blue";
   case TokenClass::Comment:
-    return { "color:darkred" };
+    return "color:darkred";
   case TokenClass::Preprocessor:
     return "color:purple";
   case TokenClass::String:

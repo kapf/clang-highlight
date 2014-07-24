@@ -61,6 +61,12 @@ public:
     NamespaceDeclClass,
     FunctionDeclClass,
     TemplateParameterTypeClass,
+    PPStringClass,
+    firstPPDirective,
+    PPIncludeClass,
+    PPIfClass,
+    UnparsablePPClass,
+    lastPPDirective,
   };
 
   ASTElementClass getASTClass() const { return sClass; }
@@ -109,7 +115,6 @@ public:
 };
 
 struct QualifiedID {
-
   struct TemplateArguments {
     llvm::SmallVector<TypeOrExpression, 2> Args;
     llvm::SmallVector<AnnotatedTokenRef, 3> Separators;
@@ -264,7 +269,7 @@ public:
 /// Function calls
 class CallExpr : public Expr {
 public:
-  std::unique_ptr<DeclRefExpr> FunctionName;
+  QualifiedID Qualifier;
   enum {
     LEFT,
     RIGHT,
@@ -275,7 +280,9 @@ public:
   llvm::SmallVector<AnnotatedTokenRef, 3> Commas;
 
   CallExpr(std::unique_ptr<DeclRefExpr> FunctionName)
-      : Expr(CallExprClass), FunctionName(std::move(FunctionName)) {}
+      : Expr(CallExprClass), Qualifier(FunctionName->Qualifier) {
+    Qualifier.reown(this);
+  }
 
   void setParen(int Index, AnnotatedToken *AT) {
     Parens[Index] = AnnotatedTokenRef(AT, this);
@@ -878,11 +885,107 @@ struct NamespaceDecl : Stmt, BlockScope<NamespaceDecl> {
   }
 };
 
-struct TranslationUnit : Scope {};
+struct PPDirective : ASTElement {
+protected:
+  PPDirective(ASTElementClass SC) : ASTElement(SC) {}
+
+public:
+  static bool classof(const ASTElement *T) {
+    auto Class = T->getASTClass();
+    return firstPPDirective <= Class && Class <= lastPPDirective;
+  }
+};
+
+struct PPString : ASTElement {
+  PPString() : ASTElement(PPStringClass) {}
+
+  llvm::SmallVector<AnnotatedTokenRef, 8> Refs;
+
+  void addToken(AnnotatedToken *Tok) {
+    Refs.push_back(AnnotatedTokenRef(Tok, this));
+  }
+
+  static bool classof(const ASTElement *T) {
+    return T->getASTClass() == PPStringClass;
+  }
+};
+
+struct PPInclude : PPDirective {
+  PPInclude() : PPDirective(PPIncludeClass) {}
+
+  enum {
+    HASH,
+    INCLUDE,
+    EOD,
+    END_EXPR
+  };
+  AnnotatedTokenRef Refs[END_EXPR];
+  std::unique_ptr<PPString> Path;
+
+  void setRef(int Index, AnnotatedToken *Tok) {
+    Refs[Index] = AnnotatedTokenRef(Tok, this);
+  }
+  void setHash(AnnotatedToken *Tok) { setRef(HASH, Tok); }
+  void setInclude(AnnotatedToken *Tok) { setRef(INCLUDE, Tok); }
+  void setEOD(AnnotatedToken *Tok) { setRef(EOD, Tok); }
+
+  static bool classof(const ASTElement *T) {
+    return T->getASTClass() == PPIncludeClass;
+  }
+};
+
+struct PPIf : PPDirective {
+  PPIf() : PPDirective(PPIfClass) {}
+
+  enum {
+    HASH,
+    KEYWORD,
+    EOD,
+    END_EXPR
+  };
+  AnnotatedTokenRef Refs[END_EXPR];
+
+  std::unique_ptr<ASTElement> Cond;
+
+  void setRef(int Index, AnnotatedToken *Tok) {
+    Refs[Index] = AnnotatedTokenRef(Tok, this);
+  }
+  void setHash(AnnotatedToken *Tok) { setRef(HASH, Tok); }
+  void setKeyword(AnnotatedToken *Tok) { setRef(KEYWORD, Tok); }
+  void setEOD(AnnotatedToken *Tok) { setRef(EOD, Tok); }
+
+  static bool classof(const ASTElement *T) {
+    return T->getASTClass() == PPIfClass;
+  }
+};
+
+struct UnparsablePP : PPDirective {
+  UnparsablePP() : PPDirective(UnparsablePPClass) {}
+
+  llvm::SmallVector<AnnotatedTokenRef, 8> Refs;
+  void push_back(AnnotatedToken *Tok) {
+    Refs.push_back(AnnotatedTokenRef(Tok, this));
+  }
+
+  static bool classof(const ASTElement *T) {
+    return T->getASTClass() == UnparsablePPClass;
+  }
+};
+
+struct TranslationUnit : Scope {
+  llvm::SmallVector<std::unique_ptr<PPDirective>, 8> PPDirectives;
+
+  void addPPDirective(std::unique_ptr<PPDirective> PP) {
+    PPDirectives.push_back(std::move(PP));
+  }
+};
 
 TranslationUnit fuzzyparse(AnnotatedToken *first, AnnotatedToken *last);
 
 void printAST(llvm::raw_ostream &OS, const Stmt &Root,
+              const SourceManager &SourceMgr);
+
+void printAST(llvm::raw_ostream &OS, const TranslationUnit &TU,
               const SourceManager &SourceMgr);
 
 } // end namespace fuzzy
