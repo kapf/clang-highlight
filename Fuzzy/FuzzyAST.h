@@ -16,8 +16,6 @@
 #include "AnnotatedToken.h"
 #include <memory>
 
-using namespace clang;
-
 namespace llvm {
 class raw_ostream;
 }

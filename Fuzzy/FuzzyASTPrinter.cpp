@@ -109,7 +109,7 @@ void ASTPrinter::print(Indented Indent, const VarDecl &DCL) {
 void ASTPrinter::print(Indented Indent, const Expr &EXP) {
   if (auto *BinOp = llvm::dyn_cast<BinaryOperator>(&EXP)) {
     print(Indent.next(), *BinOp->getLHS());
-    OS << Indent << tok::getTokenName(BinOp->OperatorTok->Tok.getKind())
+    OS << Indent << tok::getTokenName(BinOp->OperatorTok->getTokenKind())
        << '\n';
     print(Indent.next(), *BinOp->getRHS());
   } else if (auto *Decl = llvm::dyn_cast<DeclRefExpr>(&EXP)) {
@@ -221,7 +221,8 @@ void ASTPrinter::print(Indented Indent, const PPDirective &PP) {
         OS << S->getText(SourceMgr);
     OS << "'\n";
   } else if (auto *If = llvm::dyn_cast<PPIf>(&PP)) {
-    OS << Indent << "Preprocessor If/Else/Elif:\n";
+    OS << Indent << "Preprocessor '"
+       << If->Refs[PPIf::KEYWORD]->getText(SourceMgr) << "':\n";
     if (If->Cond) {
       if (auto *E = dyn_cast<Expr>(If->Cond.get()))
         print(Indent.next(), *E);

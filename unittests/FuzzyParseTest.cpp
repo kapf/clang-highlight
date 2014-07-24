@@ -86,7 +86,7 @@ protected:
           Lex.setParsingPreprocessorDirective(false);
 
         Tokens.push_back(fuzzy::AnnotatedToken(TmpTok));
-        Token &ThisTok = Tokens.back().Tok;
+        Token &ThisTok = Tokens.back().Tok();
 
         StringRef TokenText(SourceMgr.getCharacterData(ThisTok.getLocation()),
                             ThisTok.getLength());
@@ -96,7 +96,6 @@ protected:
           ThisTok.setIdentifierInfo(&Info);
           ThisTok.setKind(Info.getTokenID());
         }
-        Tokens.back().Text = Tokens.back().getText(SourceMgr);
 
         if (ThisTok.is(tok::eof))
           break;
@@ -113,22 +112,22 @@ protected:
 
     size_t NonWhitespaceTokens = 0;
     for (auto &Tok : AllTokens)
-      if (Tok.Tok.getKind() != tok::comment &&
-          Tok.Tok.getKind() != tok::unknown && Tok.Tok.getKind() != tok::eof)
+      if (Tok.getTokenKind() != tok::comment &&
+          Tok.getTokenKind() != tok::unknown && Tok.getTokenKind() != tok::eof)
         ++NonWhitespaceTokens;
 
     EXPECT_EQ(NonWhitespaceTokens, TokenTypes.size());
     for (size_t I = 0, J = 0; I < TokenTypes.size(); ++I, ++J) {
-      while (AllTokens[J].Tok.getKind() == tok::comment ||
-             AllTokens[J].Tok.getKind() == tok::unknown ||
-             AllTokens[J].Tok.getKind() == tok::eof)
+      while (AllTokens[J].getTokenKind() == tok::comment ||
+             AllTokens[J].getTokenKind() == tok::unknown ||
+             AllTokens[J].getTokenKind() == tok::eof)
         ++J;
-      if (!TokenTypes[I].verify(AllTokens[J].ASTReference)) {
+      if (!TokenTypes[I].verify(AllTokens[J].getASTReference())) {
         llvm::dbgs() << "Parsed " << Code << " into:\n";
         for (auto &S : Parsed.TU.children())
           printAST(llvm::dbgs(), S, Parsed.SourceMgr);
         llvm::dbgs() << "I=" << I << ", J=" << J << '\n';
-        EXPECT_TRUE(TokenTypes[I].verify(AllTokens[J].ASTReference));
+        EXPECT_TRUE(TokenTypes[I].verify(AllTokens[J].getASTReference()));
       }
     }
   }
@@ -136,9 +135,9 @@ protected:
   void checkUnparsable(StringRef Code) {
     ParseResult Parsed(Code);
     for (auto &Tok : Parsed.Tokens)
-      if (Tok.Tok.getKind() != tok::comment &&
-          Tok.Tok.getKind() != tok::unknown && Tok.Tok.getKind() != tok::eof)
-        EXPECT_TRUE(llvm::isa<UnparsableBlock>(Tok.ASTReference));
+      if (Tok.getTokenKind() != tok::comment &&
+          Tok.getTokenKind() != tok::unknown && Tok.getTokenKind() != tok::eof)
+        EXPECT_TRUE(llvm::isa<UnparsableBlock>(Tok.getASTReference()));
   }
 
   void dump(ParseResult &Parsed, StringRef Code) {

@@ -13,28 +13,32 @@
 #include "clang/Lex/Lexer.h"
 #include <memory>
 
-using namespace clang;
-
 namespace clang {
 namespace fuzzy {
 
 class ASTElement;
 
-struct AnnotatedToken {
-  AnnotatedToken(Token Tok) : Tok(Tok), ASTReference(nullptr) {}
+class AnnotatedToken {
+  Token Tok_;
+  ASTElement *Annot;
 
-  Token Tok;
-  ASTElement *ASTReference;
-  StringRef Text;
+public:
+  AnnotatedToken(Token Tok) : Tok_(Tok), Annot(nullptr) {}
 
   StringRef getText(const SourceManager &SourceMgr) const {
-    return StringRef(SourceMgr.getCharacterData(Tok.getLocation()),
-                     Tok.getLength());
+    return StringRef(SourceMgr.getCharacterData(Tok().getLocation()),
+                     Tok().getLength());
   }
 
-  void setASTReference(ASTElement *ASTReference) {
-    this->ASTReference = ASTReference;
-  }
+  tok::TokenKind getTokenKind() const { return Tok().getKind(); }
+
+  Token& Tok() { return Tok_; }
+  const Token& Tok() const { return Tok_; }
+
+  void setASTReference(ASTElement *ASTReference) { Annot = ASTReference; }
+  const ASTElement *getASTReference() const { return Annot; }
+  ASTElement *getASTReference() { return Annot; }
+  bool hasASTReference() const { return Annot; }
 };
 
 class AnnotatedTokenRef {
