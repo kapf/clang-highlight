@@ -150,28 +150,36 @@ void highlight(std::unique_ptr<llvm::MemoryBuffer> Source, StringRef FileName,
                         ThisTok.getLength());
 
     if (ATok.hasASTReference()) {
-      if (!IdentifiersOnly || ATok.getTokenKind() == tok::identifier) {
-        if (llvm::isa<fuzzy::Type>(ATok.getASTReference()) ||
-            llvm::isa<fuzzy::Type::Decoration>(ATok.getASTReference()) ||
-            ((llvm::isa<fuzzy::ClassDecl>(ATok.getASTReference()) ||
-              llvm::isa<fuzzy::TemplateParameterType>(ATok.getASTReference())) &&
-             ATok.getTokenKind() == tok::identifier)) {
-          Class = TokenClass::Type;
-          ThisTok.setKind(tok::annot_typename);
-        }
+      auto *R = ATok.getASTReference();
+      if (llvm::isa<fuzzy::NamespaceDecl>(R) &&
+          ATok.getTokenKind() == tok::identifier) {
+        Class = TokenClass::Namespace;
       }
-      if (isa<fuzzy::PPString>(ATok.getASTReference())) {
+      auto isType = [&] {
+        return llvm::isa<fuzzy::Type>(R) ||
+               llvm::isa<fuzzy::Type::Decoration>(R);
+      };
+      auto isTypeDecl = [&] {
+        return ATok.getTokenKind() == tok::identifier &&
+               (llvm::isa<fuzzy::ClassDecl>(R) ||
+                llvm::isa<fuzzy::TemplateParameterType>(R));
+      };
+      if ((!IdentifiersOnly || ATok.getTokenKind() == tok::identifier) &&
+          (isType() || isTypeDecl())) {
+        Class = TokenClass::Type;
+        ThisTok.setKind(tok::annot_typename);
+      }
+      if (isa<fuzzy::PPString>(R)) {
         Class = TokenClass::String;
       }
-      if (isa<fuzzy::PPDirective>(ATok.getASTReference())) {
+      if (isa<fuzzy::PPDirective>(R)) {
         Class = TokenClass::Preprocessor;
       }
-      if (isa<fuzzy::DeclRefExpr>(ATok.getASTReference())) {
+      if (isa<fuzzy::DeclRefExpr>(R)) {
         Class = TokenClass::Variable;
       }
       if (ATok.getTokenKind() == tok::identifier &&
-          (isa<fuzzy::CallExpr>(ATok.getASTReference()) ||
-           isa<fuzzy::FunctionDecl>(ATok.getASTReference()))) {
+          (isa<fuzzy::CallExpr>(R) || isa<fuzzy::FunctionDecl>(R))) {
         Class = TokenClass::Function;
       }
     }

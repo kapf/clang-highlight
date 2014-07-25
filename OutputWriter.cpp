@@ -69,6 +69,8 @@ static const char *getSpanStyle(TokenClass Class) {
     return "color:red";
   case TokenClass::Char:
     return "color:magenta";
+  case TokenClass::Function:
+    return "color:black;font-style:italic";
   default:
     return "color:black";
   }
@@ -90,10 +92,40 @@ static const char *getSpanClass(TokenClass Class) {
     return "ch-string";
   case TokenClass::Char:
     return "ch-char";
+  case TokenClass::Function:
+    return "ch-function";
+  case TokenClass::Variable:
+    return "ch-variable";
   default:
     return "ch-default";
   }
 }
+
+namespace {
+class XmlEscaper {
+  StringRef S;
+public:
+  XmlEscaper(StringRef S) : S(S) {};
+
+  friend raw_ostream& operator<<(raw_ostream& OS, const XmlEscaper &HE) {
+    for (char C : HE.S)
+      switch (C) {
+      case '&': OS << "&amp;"; break;
+      case '\'': OS << "&apos;"; break;
+      case '"': OS << "&quot;"; break;
+      case '<': OS << "&lt;"; break;
+      case '>': OS << "&gt;"; break;
+      default: OS << C; break;
+      }
+    return OS;
+  }
+};
+} // end anonymous namespace
+
+XmlEscaper xmlEscaped(StringRef S) {
+  return XmlEscaper(S);
+}
+
 namespace {
 class ColorStreamWriter : public OutputWriter {
   raw_ostream &OS;
@@ -124,7 +156,7 @@ public:
 
   void writeToken(StringRef Text, TokenClass Class) override {
     OS << R"(<span style=")" << getSpanStyle(Class) << R"(">)"
-       << Text << "</span>";
+       << xmlEscaped(Text) << "</span>";
   }
 };
 } // end anonymous namespace
@@ -143,6 +175,8 @@ public:
 .clanghighlight span.ch-preprocessor { color:purple }
 .clanghighlight span.ch-string { color:red }
 .clanghighlight span.ch-char { color:magenta }
+.clanghighlight span.ch-function { color:black;font-style=italic }
+.clanghighlight span.ch-variable { color:black }
 .clanghighlight span.ch-default { color:black }
 </style>
 <p style="white-space:pre" class="clanghighlight"><tt>)XX";
@@ -151,7 +185,7 @@ public:
 
   void writeToken(StringRef Text, TokenClass Class) override {
     OS << R"(<span class=")" << getSpanClass(Class) << R"(">)"
-       << Text << "</span>";
+       << xmlEscaped(Text) << "</span>";
   }
 };
 } // end anonymous namespace
