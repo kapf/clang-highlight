@@ -12,7 +12,7 @@
 #include "clang/Basic/OperatorPrecedence.h"
 #include "FuzzyAST.h"
 
-using namespace clang;
+using namespace llvm;
 
 namespace clang {
 namespace fuzzy {
@@ -34,6 +34,7 @@ template <bool SkipPreprocessor> class BasicTokenFilter {
       else
         break;
     }
+    assert(First <= Last);
   }
 
 public:
@@ -43,10 +44,9 @@ public:
   }
 
   AnnotatedToken *next() {
+    assert(!eof());
     auto Ret = First++;
     skipWhitespaces();
-    if (First == Last || First->getTokenKind() == tok::eof)
-      First = Last = 0;
     assert(Ret->getTokenKind() != tok::raw_identifier);
     return Ret;
   }
@@ -89,7 +89,10 @@ public:
   TokenFilterGuard guard() { return TokenFilterGuard(this, mark()); }
 
   AnnotatedToken *peek() { return First; }
+  const AnnotatedToken *peek() const { return First; }
   tok::TokenKind peekKind() const { return First->getTokenKind(); }
+
+  bool eof() const { return peekKind() == tok::eof; }
 };
 using TokenFilter = BasicTokenFilter<true>;
 using RawTokenFilter = BasicTokenFilter<false>;
@@ -97,7 +100,7 @@ using RawTokenFilter = BasicTokenFilter<false>;
 
 template <bool B>
 static bool checkKind(BasicTokenFilter<B> &TF, tok::TokenKind Kind) {
-  return TF.peek() && TF.peekKind() == Kind;
+  return TF.peekKind() == Kind;
 }
 
 static int PrecedenceUnaryOperator = prec::PointerToMember + 1;
@@ -110,8 +113,6 @@ static std::unique_ptr<Type> parseType(TokenFilter &TF,
                                        bool WithDecorations = true);
 
 static std::unique_ptr<Expr> parseUnaryOperator(TokenFilter &TF) {
-  assert(TF.peek() && "can't parse empty expression");
-
   if (checkKind(TF, tok::plus) || checkKind(TF, tok::minus) ||
       checkKind(TF, tok::exclaim) || checkKind(TF, tok::tilde) ||
       checkKind(TF, tok::star) || checkKind(TF, tok::amp) ||
@@ -120,7 +121,7 @@ static std::unique_ptr<Expr> parseUnaryOperator(TokenFilter &TF) {
     auto Operand = parseUnaryOperator(TF);
     if (!Operand)
       return {};
-    return llvm::make_unique<UnaryOperator>(Op, std::move(Operand));
+    return make_unique<UnaryOperator>(Op, std::move(Operand));
   }
 
   return parseExpr(TF, PrecedenceArrowAndPeriod);
@@ -129,11 +130,11 @@ static std::unique_ptr<Expr> parseUnaryOperator(TokenFilter &TF) {
 static std::unique_ptr<Expr>
 parseCallExpr(TokenFilter &TF, std::unique_ptr<DeclRefExpr> FunctionName) {
   assert(checkKind(TF, tok::l_paren));
-  auto Func = llvm::make_unique<CallExpr>(std::move(FunctionName));
+  auto Func = make_unique<CallExpr>(std::move(FunctionName));
   Func->setLeftParen(TF.next());
   while (!checkKind(TF, tok::r_paren)) {
     Func->Args.push_back(parseExpr(TF, prec::Comma + 1));
-    if (TF.peekKind() == tok::comma)
+    if (checkKind(TF, tok::comma))
       Func->appendComma(TF.next());
     else
       break;
@@ -150,6 +151,7 @@ static bool isLiteralOrConstant(tok::TokenKind K) {
     return true;
 
   switch (K) {
+  case tok::kw_this:
   case tok::kw_true:
   case tok::kw_false:
   case tok::kw___objc_yes:
@@ -239,14 +241,15 @@ static bool parseQualifiedID(TokenFilter &TF, QualOwner &Qual,
 
 static std::unique_ptr<Expr> parseExpr(TokenFilter &TF, int Precedence,
                                        bool StopAtGreater) {
-  assert(TF.peek() && "can't parse empty expression");
+  if (!TF.peek())
+    return {};
 
   if (Precedence == PrecedenceUnaryOperator)
     return parseUnaryOperator(TF);
 
   if (Precedence > PrecedenceArrowAndPeriod) {
     if (isLiteralOrConstant(TF.peekKind()))
-      return llvm::make_unique<LiteralConstant>(TF.next());
+      return make_unique<LiteralConstant>(TF.next());
 
     if (checkKind(TF, tok::l_paren)) {
       auto Left = TF.next();
@@ -254,11 +257,11 @@ static std::unique_ptr<Expr> parseExpr(TokenFilter &TF, int Precedence,
       if (!checkKind(TF, tok::r_paren))
         return {};
       auto Right = TF.next();
-      return llvm::make_unique<ParenExpr>(Left, std::move(Val), Right);
+      return make_unique<ParenExpr>(Left, std::move(Val), Right);
     }
 
     if (checkKind(TF, tok::identifier) || checkKind(TF, tok::coloncolon)) {
-      auto DR = llvm::make_unique<DeclRefExpr>();
+      auto DR = make_unique<DeclRefExpr>();
       if (!parseQualifiedID(TF, *DR) &&
           !parseQualifiedID(TF, *DR, std::false_type{}))
         return {};
@@ -266,7 +269,7 @@ static std::unique_ptr<Expr> parseExpr(TokenFilter &TF, int Precedence,
         return parseCallExpr(TF, std::move(DR));
       std::unique_ptr<Expr> Ret = std::move(DR);
       while (checkKind(TF, tok::plusplus) || checkKind(TF, tok::minusminus))
-        Ret = llvm::make_unique<UnaryOperator>(TF.next(), std::move(Ret));
+        Ret = make_unique<UnaryOperator>(TF.next(), std::move(Ret));
       return std::move(Ret);
     }
 
@@ -276,12 +279,11 @@ static std::unique_ptr<Expr> parseExpr(TokenFilter &TF, int Precedence,
   if (!LeftExpr)
     return {};
 
-  while (TF.peek()) {
+  while (!TF.eof()) {
     if (StopAtGreater && checkKind(TF, tok::greater))
       break;
 
-    int CurrentPrecedence =
-        getBinOpPrecedence(TF.peekKind(), true, true);
+    int CurrentPrecedence = getBinOpPrecedence(TF.peekKind(), true, true);
     if (checkKind(TF, tok::period) || checkKind(TF, tok::arrow))
       CurrentPrecedence = PrecedenceArrowAndPeriod;
     if (CurrentPrecedence == 0)
@@ -298,8 +300,8 @@ static std::unique_ptr<Expr> parseExpr(TokenFilter &TF, int Precedence,
     if (!RightExpr)
       return {};
 
-    LeftExpr = llvm::make_unique<BinaryOperator>(
-        std::move(LeftExpr), std::move(RightExpr), OperatorTok);
+    LeftExpr = make_unique<BinaryOperator>(std::move(LeftExpr),
+                                           std::move(RightExpr), OperatorTok);
   }
 
   return LeftExpr;
@@ -319,7 +321,7 @@ static std::unique_ptr<Stmt> parseReturnStmt(TokenFilter &TF) {
   assert(checkKind(TF, tok::semi));
   auto *Semi = TF.next();
   Guard.dismiss();
-  return llvm::make_unique<ReturnStmt>(Return, std::move(Body), Semi);
+  return make_unique<ReturnStmt>(Return, std::move(Body), Semi);
 }
 
 static void parseTypeDecorations(TokenFilter &TF, Type &T) {
@@ -379,21 +381,20 @@ static bool isCVQualifier(tok::TokenKind K) {
 
 static std::unique_ptr<Type> parseType(TokenFilter &TF, bool WithDecorations) {
   auto Guard = TF.guard();
-  std::unique_ptr<Type> T = llvm::make_unique<Type>();
+  std::unique_ptr<Type> T = make_unique<Type>();
 
-  while (TF.peek() && (isCVQualifier(TF.peekKind()) ||
-                       checkKind(TF, tok::kw_typename)))
+  while (isCVQualifier(TF.peekKind()) || checkKind(TF, tok::kw_typename))
     T->addNameQualifier(TF.next());
 
   if (checkKind(TF, tok::kw_auto)) {
     T->addNameQualifier(TF.next());
-  } else if (TF.peek() && isBuiltinType(TF.peekKind())) {
-    while (TF.peek() && isBuiltinType(TF.peekKind()))
+  } else if (isBuiltinType(TF.peekKind())) {
+    while (isBuiltinType(TF.peekKind()))
       T->addNameQualifier(TF.next());
   } else if (!parseQualifiedID(TF, *T)) {
     return {};
   }
-  while (TF.peek() && isCVQualifier(TF.peekKind()))
+  while (isCVQualifier(TF.peekKind()))
     T->addNameQualifier(TF.next());
 
   if (WithDecorations)
@@ -408,7 +409,7 @@ static std::unique_ptr<VarDecl> parseVarDecl(TokenFilter &TF,
                                              bool NameOptional = false,
                                              bool StopAtGreater = false) {
   auto Guard = TF.guard();
-  auto VD = llvm::make_unique<VarDecl>();
+  auto VD = make_unique<VarDecl>();
   VarDecl &D = *VD;
 
   if (!TypeName) {
@@ -449,9 +450,9 @@ static std::unique_ptr<Stmt> parseDeclStmt(TokenFilter &TF,
   auto TypeName = parseType(TF, /*WithDecorations=*/false);
   if (!TypeName)
     return {};
-  auto Declaration = llvm::make_unique<DeclStmt>();
+  auto Declaration = make_unique<DeclStmt>();
 
-  while (TF.peek()) {
+  while (!TF.eof()) {
     if (checkKind(TF, tok::semi)) {
       if (Declaration->Decls.empty())
         return {};
@@ -492,7 +493,7 @@ static bool parseDestructor(TokenFilter &TF, FunctionDecl &F) {
 
   TF.rewind(Pos);
 
-  F.ReturnType = llvm::make_unique<Type>();
+  F.ReturnType = make_unique<Type>();
 
   while (checkKind(TF, tok::tilde) || checkKind(TF, tok::identifier) ||
          checkKind(TF, tok::coloncolon)) {
@@ -528,9 +529,9 @@ static bool isDeclSpecifier(tok::TokenKind K) {
 static std::unique_ptr<FunctionDecl>
 parseFunctionDecl(TokenFilter &TF, bool NameOptional = false) {
   auto Guard = TF.guard();
-  auto F = llvm::make_unique<FunctionDecl>();
+  auto F = make_unique<FunctionDecl>();
 
-  while (TF.peek() && isDeclSpecifier(TF.peekKind()))
+  while (isDeclSpecifier(TF.peekKind()))
     F->addDeclSpecifier(TF.next());
 
   bool InDestructor = false;
@@ -572,7 +573,7 @@ parseFunctionDecl(TokenFilter &TF, bool NameOptional = false) {
 
   // if (InConstructor && checkKind(TF, tok::colon)) {
   // TODO: Don't skip initializer list and [[x]] and const
-  while (TF.peek() && !checkKind(TF, tok::l_brace) && !checkKind(TF, tok::semi))
+  while (!TF.eof() && !checkKind(TF, tok::l_brace) && !checkKind(TF, tok::semi))
     TF.next();
   //}
 
@@ -583,9 +584,9 @@ parseFunctionDecl(TokenFilter &TF, bool NameOptional = false) {
 }
 
 static std::unique_ptr<Stmt> skipUnparsable(TokenFilter &TF) {
-  assert(TF.peek());
-  auto UB = llvm::make_unique<UnparsableBlock>();
-  while (TF.peek()) {
+  assert(!TF.eof());
+  auto UB = make_unique<UnparsableBlock>();
+  while (!TF.eof()) {
     auto Kind = TF.peekKind();
     UB->push_back(TF.next());
     if (Kind == tok::semi || Kind == tok::r_brace || Kind == tok::l_brace)
@@ -603,7 +604,7 @@ static std::unique_ptr<Stmt> parseLabelStmt(TokenFilter &TF) {
   if (!checkKind(TF, tok::colon))
     return {};
   Guard.dismiss();
-  return llvm::make_unique<LabelStmt>(LabelName, TF.next());
+  return make_unique<LabelStmt>(LabelName, TF.next());
 }
 
 static std::unique_ptr<PPInclude> parseIncludeDirective(RawTokenFilter &TF) {
@@ -615,12 +616,12 @@ static std::unique_ptr<PPInclude> parseIncludeDirective(RawTokenFilter &TF) {
   if (TF.peek()->Tok().getIdentifierInfo()->getPPKeywordID() != tok::pp_include)
     return {};
 
-  auto Inc = llvm::make_unique<PPInclude>();
+  auto Inc = make_unique<PPInclude>();
   Inc->setHash(HashTok);
   Inc->setInclude(TF.next());
-  Inc->Path = llvm::make_unique<PPString>();
+  Inc->Path = make_unique<PPString>();
 
-  while (TF.peek() && !checkKind(TF, tok::eod)) {
+  while (!checkKind(TF, tok::eod)) {
     Inc->Path->addToken(TF.next());
   }
   Inc->setEOD(TF.next());
@@ -640,7 +641,7 @@ static std::unique_ptr<PPIf> parsePPIf(RawTokenFilter &TF) {
       TF.peek()->Tok().getIdentifierInfo()->getPPKeywordID() != tok::pp_endif)
     return {};
 
-  auto If = llvm::make_unique<PPIf>();
+  auto If = make_unique<PPIf>();
   If->setHash(HashTok);
   If->setKeyword(TF.next());
 
@@ -659,7 +660,7 @@ static std::unique_ptr<PPIf> parsePPIf(RawTokenFilter &TF) {
       If->Cond = std::move(Cond);
     else {
       SubTF.rewind(SubStart);
-      auto UB = llvm::make_unique<UnparsableBlock>();
+      auto UB = make_unique<UnparsableBlock>();
       while (!checkKind(SubTF, tok::eod))
         UB->push_back(SubTF.next());
       If->Cond = std::move(UB);
@@ -677,7 +678,7 @@ static std::unique_ptr<PPDirective> parsePPDirective(RawTokenFilter &TF) {
     return std::move(I);
   if (auto D = parsePPIf(TF))
     return std::move(D);
-  auto UP = llvm::make_unique<UnparsablePP>();
+  auto UP = make_unique<UnparsablePP>();
   while (!checkKind(TF, tok::eod))
     UP->push_back(TF.next());
   return std::move(UP);
@@ -687,12 +688,12 @@ static std::unique_ptr<Stmt> parseAny(TokenFilter &TF,
                                       bool SkipUnparsable = true,
                                       bool NameOptional = false);
 
-static bool parseScope(TokenFilter &TF, Scope &Sc) {
+static bool parseScope(TokenFilter &TF, Scope &Sc, bool NameOptional = false) {
   if (checkKind(TF, tok::r_brace))
     return true;
-  while (auto St = parseAny(TF, true, true)) {
+  while (auto St = parseAny(TF, true, NameOptional)) {
     Sc.addStmt(std::move(St));
-    if (!TF.peek())
+    if (TF.eof())
       return false;
     if (checkKind(TF, tok::r_brace))
       return true;
@@ -703,7 +704,7 @@ static bool parseScope(TokenFilter &TF, Scope &Sc) {
 static std::unique_ptr<CompoundStmt> parseCompoundStmt(TokenFilter &TF) {
   if (!checkKind(TF, tok::l_brace))
     return {};
-  auto C = llvm::make_unique<CompoundStmt>();
+  auto C = make_unique<CompoundStmt>();
   C->setLeftBrace(TF.next());
   parseScope(TF, *C);
   if (checkKind(TF, tok::r_brace))
@@ -733,9 +734,9 @@ static std::unique_ptr<ASTElement> parseCond(TokenFilter &TF,
   if (auto E = parseExpr(TF))
     return std::move(E);
 
-  auto UB = llvm::make_unique<UnparsableBlock>();
+  auto UB = make_unique<UnparsableBlock>();
   int ParenOpen = 1;
-  while (TF.peek()) {
+  while (!TF.eof()) {
     if (checkKind(TF, tok::l_paren)) {
       ++ParenOpen;
     } else if (checkKind(TF, tok::r_paren)) {
@@ -757,7 +758,7 @@ static std::unique_ptr<Stmt> parseControlFlowStmt(TokenFilter &TF) {
   auto Guard = TF.guard();
 
   if (checkKind(TF, tok::kw_while)) {
-    auto S = llvm::make_unique<WhileStmt>();
+    auto S = make_unique<WhileStmt>();
 
     S->setKeyword(TF.next());
     if (!checkKind(TF, tok::l_paren))
@@ -777,7 +778,7 @@ static std::unique_ptr<Stmt> parseControlFlowStmt(TokenFilter &TF) {
   }
 
   if (checkKind(TF, tok::kw_if)) {
-    auto If = llvm::make_unique<IfStmt>();
+    auto If = make_unique<IfStmt>();
     for (bool ElseBranch = false, First = true; !ElseBranch; First = false) {
       AnnotatedToken *KW1, *KW2 = nullptr;
       if (First && checkKind(TF, tok::kw_if)) {
@@ -816,7 +817,7 @@ static std::unique_ptr<Stmt> parseControlFlowStmt(TokenFilter &TF) {
   }
 
   if (checkKind(TF, tok::kw_for)) {
-    auto S = llvm::make_unique<ForStmt>();
+    auto S = make_unique<ForStmt>();
 
     S->setKeyword(TF.next());
     if (!checkKind(TF, tok::l_paren))
@@ -854,7 +855,7 @@ static bool parseClassScope(TokenFilter &TF, ClassDecl &C) {
     return false;
 
   C.setLeftBrace(TF.next());
-  if (!parseScope(TF, C))
+  if (!parseScope(TF, C, true))
     return false;
 
   if (checkKind(TF, tok::r_brace))
@@ -879,12 +880,12 @@ static std::unique_ptr<Stmt> parseNamespaceDecl(TokenFilter &TF) {
   if (!checkKind(TF, tok::l_brace))
     return {};
 
-  auto NS = llvm::make_unique<NamespaceDecl>();
+  auto NS = make_unique<NamespaceDecl>();
   NS->setNamespace(NSTok);
   NS->setName(NameTok);
   NS->setLeftBrace(TF.next());
 
-  (void)parseScope(TF, *NS);
+  parseScope(TF, *NS);
 
   if (checkKind(TF, tok::r_brace))
     NS->setRightBrace(TF.next());
@@ -900,7 +901,7 @@ static std::unique_ptr<ClassDecl> parseClassDecl(TokenFilter &TF) {
 
   auto Guard = TF.guard();
 
-  auto C = llvm::make_unique<ClassDecl>();
+  auto C = make_unique<ClassDecl>();
   C->setClass(TF.next());
 
   if (!(C->Name = parseType(TF)))
@@ -947,7 +948,7 @@ parseTemplateParameterType(TokenFilter &TF) {
     return {};
   auto Guard = TF.guard();
 
-  auto TPT = llvm::make_unique<TemplateParameterType>();
+  auto TPT = make_unique<TemplateParameterType>();
   TPT->setKeyword(TF.next());
   if (!checkKind(TF, tok::identifier))
     return {};
@@ -967,7 +968,7 @@ static std::unique_ptr<TemplateDecl> parseTemplateDecl(TokenFilter &TF) {
     return {};
 
   auto Guard = TF.guard();
-  auto T = llvm::make_unique<TemplateDecl>();
+  auto T = make_unique<TemplateDecl>();
   T->setKeyword(TF.next());
 
   if (!checkKind(TF, tok::less))
@@ -1039,7 +1040,7 @@ static std::unique_ptr<Stmt> parseAny(TokenFilter &TF, bool SkipUnparsable,
     if (auto E = parseExpr(TF)) {
       if (checkKind(TF, tok::semi)) {
         Guard.dismiss();
-        return llvm::make_unique<ExprLineStmt>(std::move(E), TF.next());
+        return make_unique<ExprLineStmt>(std::move(E), TF.next());
       }
     }
   }
@@ -1050,16 +1051,15 @@ TranslationUnit fuzzyparse(AnnotatedToken *first, AnnotatedToken *last) {
   TranslationUnit TU;
   {
     BasicTokenFilter<false> TF(first, last);
-    while (TF.peek()) {
-      if (TF.peekKind() == tok::hash &&
-          TF.peek()->Tok().isAtStartOfLine())
+    while (!TF.eof()) {
+      if (TF.peekKind() == tok::hash && TF.peek()->Tok().isAtStartOfLine())
         TU.addPPDirective(parsePPDirective(TF));
       TF.next();
     }
   }
   {
     TokenFilter TF(first, last);
-    while (TF.peek())
+    while (!TF.eof())
       TU.addStmt(parseAny(TF));
   }
   return TU;

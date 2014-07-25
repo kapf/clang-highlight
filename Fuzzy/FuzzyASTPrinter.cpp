@@ -11,7 +11,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "FuzzyAST.h"
 
-using namespace clang;
+using namespace llvm;
 
 namespace clang {
 namespace fuzzy {
@@ -33,7 +33,7 @@ struct Indented {
 namespace {
 struct ASTPrinter {
   const SourceManager &SourceMgr;
-  llvm::raw_ostream &OS;
+  raw_ostream &OS;
 
   void print(Indented Indent, const Type &T);
   void print(Indented Indent, const VarDecl &DCL);
@@ -57,14 +57,14 @@ void ASTPrinter::printCondition(Indented Indent, const char *Name,
                                 ASTElement *E) {
   OS << Indent.next() << Name << (E ? "\n" : ": <empty>\n");
   if (E) {
-    if (auto *D = llvm::dyn_cast<DeclStmt>(E))
+    if (auto *D = dyn_cast<DeclStmt>(E))
       print(Indent.next().next(), *D);
-    else if (auto *V = llvm::dyn_cast<VarDecl>(E))
+    else if (auto *V = dyn_cast<VarDecl>(E))
       print(Indent.next().next(), *V);
-    else if (auto *U = llvm::dyn_cast<UnparsableBlock>(E))
+    else if (auto *U = dyn_cast<UnparsableBlock>(E))
       print(Indent.next().next(), *U);
     else
-      print(Indent.next().next(), *llvm::cast<Expr>(E));
+      print(Indent.next().next(), *cast<Expr>(E));
   }
 }
 
@@ -107,27 +107,27 @@ void ASTPrinter::print(Indented Indent, const VarDecl &DCL) {
 }
 
 void ASTPrinter::print(Indented Indent, const Expr &EXP) {
-  if (auto *BinOp = llvm::dyn_cast<BinaryOperator>(&EXP)) {
+  if (auto *BinOp = dyn_cast<BinaryOperator>(&EXP)) {
     print(Indent.next(), *BinOp->getLHS());
     OS << Indent << tok::getTokenName(BinOp->OperatorTok->getTokenKind())
        << '\n';
     print(Indent.next(), *BinOp->getRHS());
-  } else if (auto *Decl = llvm::dyn_cast<DeclRefExpr>(&EXP)) {
+  } else if (auto *Decl = dyn_cast<DeclRefExpr>(&EXP)) {
     OS << Indent << "DeclRefExpr '";
     print(Indent.next(), Decl->Qualifier);
     OS << "'\n";
-  } else if (auto *Lit = llvm::dyn_cast<LiteralConstant>(&EXP)) {
+  } else if (auto *Lit = dyn_cast<LiteralConstant>(&EXP)) {
     OS << Indent << Lit->Tok->getText(SourceMgr) << '\n';
-  } else if (auto *Call = llvm::dyn_cast<CallExpr>(&EXP)) {
+  } else if (auto *Call = dyn_cast<CallExpr>(&EXP)) {
     OS << Indent << "call expr '";
     print(Indent.next(), Call->Qualifier);
     OS << "'\n";
     for (auto &Arg : Call->Args)
       print(Indent.next(), *Arg);
-  } else if (auto *Unar = llvm::dyn_cast<UnaryOperator>(&EXP)) {
+  } else if (auto *Unar = dyn_cast<UnaryOperator>(&EXP)) {
     OS << Indent << Unar->OperatorTok->getText(SourceMgr) << "\n";
     print(Indent.next(), *Unar->Value);
-  } else if (auto *PE = llvm::dyn_cast<ParenExpr>(&EXP)) {
+  } else if (auto *PE = dyn_cast<ParenExpr>(&EXP)) {
     OS << Indent << "ParenExpr:\n";
     print(Indent.next(), *PE->Value);
   } else {
@@ -136,31 +136,31 @@ void ASTPrinter::print(Indented Indent, const Expr &EXP) {
 }
 
 void ASTPrinter::print(Indented Indent, const Stmt &stmt) {
-  if (auto *DS = llvm::dyn_cast<DeclStmt>(&stmt)) {
+  if (auto *DS = dyn_cast<DeclStmt>(&stmt)) {
     OS << Indent << "DeclStmt\n";
     for (const auto &VD : DS->Decls)
       print(Indent.next(), *VD);
-  } else if (auto *UB = llvm::dyn_cast<UnparsableBlock>(&stmt)) {
+  } else if (auto *UB = dyn_cast<UnparsableBlock>(&stmt)) {
     (void)UB;
     OS << Indent << "Unparsable Block:\n";
     for (auto T : UB->Body)
       OS << Indent.next() << T->getText(SourceMgr) << '\n';
-  } else if (auto *ELS = llvm::dyn_cast<ExprLineStmt>(&stmt)) {
+  } else if (auto *ELS = dyn_cast<ExprLineStmt>(&stmt)) {
     OS << Indent << "ExprLineStmt\n";
     print(Indent.next(), *ELS->Body);
-  } else if (auto *RS = llvm::dyn_cast<ReturnStmt>(&stmt)) {
+  } else if (auto *RS = dyn_cast<ReturnStmt>(&stmt)) {
     OS << Indent << "ReturnStmt\n";
     if (RS->Body)
       print(Indent.next(), *RS->Body);
     else
       OS << Indent.next() << "<void>\n";
-  } else if (auto *FD = llvm::dyn_cast<FunctionDecl>(&stmt)) {
+  } else if (auto *FD = dyn_cast<FunctionDecl>(&stmt)) {
     OS << Indent << "FunctionDecl '";
     print(Indent.next().next(), FD->Name);
-    OS << "'\n" << Indent.next() << "Body: '";
+    OS << "'\n" << Indent.next() << "Body:\n";
     if (FD->Body)
       print(Indent.next().next(), *FD->Body);
-  } else if (auto *CD = llvm::dyn_cast<ClassDecl>(&stmt)) {
+  } else if (auto *CD = dyn_cast<ClassDecl>(&stmt)) {
     OS << Indent << '\'' << CD->Refs[ClassDecl::CLASS]->getText(SourceMgr)
        << "' ";
     print(Indent.next(), *CD->Name);
@@ -177,31 +177,43 @@ void ASTPrinter::print(Indented Indent, const Stmt &stmt) {
       OS << " (declaration only)\n";
     else
       printScope(Indent, *CD);
-  } else if (auto *LBL = llvm::dyn_cast<LabelStmt>(&stmt)) {
+  } else if (auto *LBL = dyn_cast<LabelStmt>(&stmt)) {
     OS << Indent << "Label '" << LBL->LabelName->getText(SourceMgr) << "'\n";
-  } else if (auto *NS = llvm::dyn_cast<NamespaceDecl>(&stmt)) {
+  } else if (auto *NS = dyn_cast<NamespaceDecl>(&stmt)) {
     OS << Indent << "Namespace '"
        << (NS->Refs[NamespaceDecl::NAME]
                ? NS->Refs[NamespaceDecl::NAME]->getText(SourceMgr)
                : "<anonymous>") << '\'';
     printScope(Indent, *NS);
-  } else if (auto *If = llvm::dyn_cast<IfStmt>(&stmt)) {
+  } else if (auto TD = dyn_cast<TemplateDecl>(&stmt)) {
+    OS << Indent << "Template <'\n";
+    for (auto &A : TD->Params) {
+      if (auto *E = dyn_cast<Expr>(A.get()))
+        print(Indent.next().next(), *E);
+      else if (auto *VD = dyn_cast<VarDecl>(A.get()))
+        print(Indent.next().next(), *VD);
+      else
+        print(Indent.next().next(), *static_cast<Stmt *>(A.get()));
+    }
+    OS << Indent.next() << "> with Body:\n";
+    print(Indent.next().next(), *TD->Templated);
+  } else if (auto *If = dyn_cast<IfStmt>(&stmt)) {
     OS << Indent << "If\n";
     for (auto &B : If->Branches) {
       printCondition(Indent, "Condition", B.Cond.get());
       OS << Indent.next() << "Body:\n";
       print(Indent.next().next(), *B.Body);
     }
-  } else if (auto *CS = llvm::dyn_cast<CompoundStmt>(&stmt)) {
+  } else if (auto *CS = dyn_cast<CompoundStmt>(&stmt)) {
     OS << Indent << "CompoundStmt:\n";
     for (auto &S : CS->Body)
       print(Indent.next(), *S);
-  } else if (auto *While = llvm::dyn_cast<WhileStmt>(&stmt)) {
+  } else if (auto *While = dyn_cast<WhileStmt>(&stmt)) {
     OS << Indent << "WhileStmt:\n";
     printCondition(Indent, "Condition", While->Cond.get());
     OS << Indent.next() << "Body:\n";
     print(Indent.next().next(), *While->Body);
-  } else if (auto *For = llvm::dyn_cast<ForStmt>(&stmt)) {
+  } else if (auto *For = dyn_cast<ForStmt>(&stmt)) {
     OS << Indent << "ForStmt:\n";
     printCondition(Indent, "Init", For->Init.get());
     printCondition(Indent, "Condition", For->Cond.get());
@@ -214,13 +226,13 @@ void ASTPrinter::print(Indented Indent, const Stmt &stmt) {
 }
 
 void ASTPrinter::print(Indented Indent, const PPDirective &PP) {
-  if (auto *Inc = llvm::dyn_cast<PPInclude>(&PP)) {
+  if (auto *Inc = dyn_cast<PPInclude>(&PP)) {
     OS << Indent << "Include Directive: '";
     if (Inc->Path)
       for (auto &S : Inc->Path->Refs)
         OS << S->getText(SourceMgr);
     OS << "'\n";
-  } else if (auto *If = llvm::dyn_cast<PPIf>(&PP)) {
+  } else if (auto *If = dyn_cast<PPIf>(&PP)) {
     OS << Indent << "Preprocessor '"
        << If->Refs[PPIf::KEYWORD]->getText(SourceMgr) << "':\n";
     if (If->Cond) {
@@ -229,7 +241,7 @@ void ASTPrinter::print(Indented Indent, const PPDirective &PP) {
       else
         print(Indent.next(), *cast<UnparsableBlock>(If->Cond.get()));
     }
-  } else if (auto *UP = llvm::dyn_cast<UnparsablePP>(&PP)) {
+  } else if (auto *UP = dyn_cast<UnparsablePP>(&PP)) {
     OS << Indent << "Unparsable PP:\n";
     for (auto R : UP->Refs)
       OS << Indent.next() << R->getText(SourceMgr) << '\n';
@@ -238,13 +250,13 @@ void ASTPrinter::print(Indented Indent, const PPDirective &PP) {
   }
 }
 
-void printAST(llvm::raw_ostream &OS, const Stmt &Root,
+void printAST(raw_ostream &OS, const Stmt &Root,
               const SourceManager &SourceMgr) {
   ASTPrinter AP{ SourceMgr, OS };
   AP.print(Indented(0), Root);
 }
 
-void printAST(llvm::raw_ostream &OS, const TranslationUnit &TU,
+void printAST(raw_ostream &OS, const TranslationUnit &TU,
               const SourceManager &SourceMgr) {
   ASTPrinter AP{ SourceMgr, OS };
   for (auto &P : TU.PPDirectives) {

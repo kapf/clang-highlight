@@ -20,6 +20,8 @@
 
 #define DEBUG_TYPE "highlight-test"
 
+using namespace llvm;
+
 namespace clang {
 namespace fuzzy {
 
@@ -34,9 +36,9 @@ template <typename T> ClassOfTester makeClassOfTester() {
   return ClassOfTester(&T::classof);
 }
 
-template <typename... T> llvm::SmallVector<ClassOfTester, 8> checkTypeSeq() {
+template <typename... T> SmallVector<ClassOfTester, 8> checkTypeSeq() {
   ClassOfTester Seq[] = { makeClassOfTester<T>()... };
-  llvm::SmallVector<ClassOfTester, 8> Ret(Seq, Seq + sizeof...(T));
+  SmallVector<ClassOfTester, 8> Ret(Seq, Seq + sizeof...(T));
   return Ret;
 }
 
@@ -71,7 +73,7 @@ protected:
                       new DiagnosticOptions),
           SourceMgr(Diagnostics, Files),
           ID(SourceMgr.createFileID(
-              llvm::MemoryBuffer::getMemBuffer(Code, FileName))),
+               MemoryBuffer::getMemBuffer(Code, FileName))),
           Lex(ID, SourceMgr.getBuffer(ID), SourceMgr, getFormattingLangOpts()),
           IdentTable(getFormattingLangOpts()) {
       Lex.SetKeepWhitespaceMode(true);
@@ -106,7 +108,7 @@ protected:
   };
 
   void checkParse(StringRef Code,
-                  llvm::SmallVector<ClassOfTester, 8> TokenTypes) {
+                  SmallVector<ClassOfTester, 8> TokenTypes) {
     ParseResult Parsed(Code);
     auto &AllTokens = Parsed.Tokens;
 
@@ -123,10 +125,10 @@ protected:
              AllTokens[J].getTokenKind() == tok::eof)
         ++J;
       if (!TokenTypes[I].verify(AllTokens[J].getASTReference())) {
-        llvm::dbgs() << "Parsed " << Code << " into:\n";
+        dbgs() << "Parsed " << Code << " into:\n";
         for (auto &S : Parsed.TU.children())
-          printAST(llvm::dbgs(), S, Parsed.SourceMgr);
-        llvm::dbgs() << "I=" << I << ", J=" << J << '\n';
+          printAST(dbgs(), S, Parsed.SourceMgr);
+        dbgs() << "I=" << I << ", J=" << J << '\n';
         EXPECT_TRUE(TokenTypes[I].verify(AllTokens[J].getASTReference()));
       }
     }
@@ -137,25 +139,35 @@ protected:
     for (auto &Tok : Parsed.Tokens)
       if (Tok.getTokenKind() != tok::comment &&
           Tok.getTokenKind() != tok::unknown && Tok.getTokenKind() != tok::eof)
-        EXPECT_TRUE(llvm::isa<UnparsableBlock>(Tok.getASTReference()));
+        EXPECT_TRUE(isa<UnparsableBlock>(Tok.getASTReference()));
+  }
+  void checkUnparsable(std::initializer_list<const char *> Codes) {
+    for (const char *C : Codes)
+      checkUnparsable(C);
   }
 
   void dump(ParseResult &Parsed, StringRef Code) {
-    llvm::dbgs() << Code << '\n';
+    dbgs() << Code << '\n';
 
-    llvm::dbgs() << "Parsed " << Code << " into:\n";
+    dbgs() << "Parsed " << Code << " into:\n";
     for (auto &S : Parsed.TU.children())
-      printAST(llvm::dbgs(), S, Parsed.SourceMgr);
+      printAST(dbgs(), S, Parsed.SourceMgr);
   }
 
   template <typename T> void checkToplevel(StringRef Code) {
     ParseResult Parsed(Code);
     if (Parsed.TU.children().size() != 1 ||
-        !llvm::isa<T>(Parsed.TU.Body[0].get())) {
+        !isa<T>(Parsed.TU.Body[0].get())) {
       dump(Parsed, Code);
     }
     EXPECT_EQ(Parsed.TU.children().size(), size_t(1));
-    EXPECT_TRUE(llvm::isa<T>(Parsed.TU.Body[0].get()));
+    EXPECT_TRUE(isa<T>(Parsed.TU.Body[0].get()));
+  }
+
+  template <typename T>
+  void checkToplevel(std::initializer_list<const char *> Codes) {
+    for (const char *C : Codes)
+      checkToplevel<T>(C);
   }
 
   template <typename F> void checkFirstPPOn(StringRef Code, F &&f) {
@@ -187,9 +199,9 @@ protected:
   template <typename T> void checkFirst(StringRef Code) {
     checkFirstOn(Code, [&](const Stmt &S, bool Abort) {
       if (Abort)
-        EXPECT_TRUE(llvm::isa<T>(S));
+        EXPECT_TRUE(isa<T>(S));
       else
-        return llvm::isa<T>(S);
+        return isa<T>(S);
       return true;
     });
   }
@@ -202,9 +214,9 @@ protected:
   template <typename T> void checkFirstPP(StringRef Code) {
     checkFirstPPOn(Code, [&](const PPDirective &P, bool Abort) {
       if (Abort)
-        EXPECT_TRUE(llvm::isa<T>(P));
+        EXPECT_TRUE(isa<T>(P));
       else
-        return llvm::isa<T>(P);
+        return isa<T>(P);
       return true;
     });
   }
@@ -254,87 +266,91 @@ TEST_F(FuzzyParseTest, DeclStmtTest) {
                    UnaryOperator, UnaryOperator, DeclRefExpr, BinaryOperator,
                    UnaryOperator, DeclRefExpr, DeclStmt>());
 
-  checkToplevel<DeclStmt>("a b;");
-  checkToplevel<DeclStmt>("a b=c(d,e);");
-  checkToplevel<DeclStmt>("a b=c(d,e,*g),*h=*i;");
-
-  checkToplevel<DeclStmt>("int a;");
-  checkToplevel<DeclStmt>("unsigned long long int a;");
-  checkToplevel<DeclStmt>("signed char a;");
-  checkToplevel<DeclStmt>("double a;");
+  checkToplevel<DeclStmt>({ "a b;",        //
+                            "a b=c(d,e);", //
+                            "a b=c(d,e,*g),*h=*i;",
+                            //
+                            "int a;",                    //
+                            "unsigned long long int a;", //
+                            "signed char a;",            //
+                            "double a;" });
 
   checkParse("register const volatile constexpr int i;",
              checkTypeSeq<Type, Type, Type, Type, Type, VarDecl, DeclStmt>());
 
-  checkUnparsable("int 1=2;");
-  checkUnparsable("1 + !(unparsable!!!);");
+  checkUnparsable({ "int 1=2;", //
+                    "1 + !(unparsable!!!);" });
 }
 
 TEST_F(FuzzyParseTest, ExprLineStmtTest) {
-  checkToplevel<ExprLineStmt>("a*b*c;");
-  checkToplevel<ExprLineStmt>("a*b*c=d;");
-  checkToplevel<ExprLineStmt>("a*b*c==d;");
-  checkToplevel<ExprLineStmt>("f();");
-  checkToplevel<ExprLineStmt>("f(a,b,c);");
-  checkToplevel<ExprLineStmt>("f(1,2,3);");
-  checkUnparsable("1(a,b);");
-  checkToplevel<ExprLineStmt>("f(1)*g;");
-  checkToplevel<ExprLineStmt>("n::f(1)*g;");
-  checkToplevel<ExprLineStmt>("a+b;");
-  checkToplevel<ExprLineStmt>("a-b;");
-  checkToplevel<ExprLineStmt>("a*b*c;");
-  checkToplevel<ExprLineStmt>("a/b;");
-  checkToplevel<ExprLineStmt>("a&b&c;");
-  checkToplevel<ExprLineStmt>("a^b;");
-  checkToplevel<ExprLineStmt>("a|b;");
-  checkToplevel<ExprLineStmt>("a<<b;");
-  checkToplevel<ExprLineStmt>("a>>b;");
-  checkToplevel<ExprLineStmt>("a<b;");
-  checkToplevel<ExprLineStmt>("a>b;");
-  checkToplevel<ExprLineStmt>("~a;");
-  checkToplevel<ExprLineStmt>("!a;");
-  checkToplevel<ExprLineStmt>("-a;");
-  checkToplevel<ExprLineStmt>("--a;");
-  checkToplevel<ExprLineStmt>("++a;");
-  checkToplevel<ExprLineStmt>("++++~~~+~!~++++++!--++++++a;");
-  checkToplevel<ExprLineStmt>("\"string literal\";");
-  checkToplevel<ExprLineStmt>("nullptr;");
-  checkToplevel<ExprLineStmt>("true;");
-  checkToplevel<ExprLineStmt>("false;");
-  checkToplevel<ExprLineStmt>("-1;");
-  checkToplevel<ExprLineStmt>("(1+-1)*(3+5);");
+  checkToplevel<ExprLineStmt>({ "a*b*c;",                       //
+                                "a*b*c=d;",                     //
+                                "a*b*c==d;",                    //
+                                "f();",                         //
+                                "f(a,b,c);",                    //
+                                "f(1,2,3);",                    //
+                                "f(1)*g;",                      //
+                                "n::f(1)*g;",                   //
+                                "a+b;",                         //
+                                "a-b;",                         //
+                                "a*b*c;",                       //
+                                "a/b;",                         //
+                                "a&b&c;",                       //
+                                "a^b;",                         //
+                                "a|b;",                         //
+                                "a<<b;",                        //
+                                "a>>b;",                        //
+                                "a<b;",                         //
+                                "a>b;",                         //
+                                "~a;",                          //
+                                "!a;",                          //
+                                "-a;",                          //
+                                "--a;",                         //
+                                "++a;",                         //
+                                "++++~~~+~!~++++++!--++++++a;", //
+                                "\"string literal\";",          //
+                                "nullptr;",                     //
+                                "this;",                        //
+                                "true;",                        //
+                                "false;",                       //
+                                "-1;",                          //
+                                "(1+-1)*(3+5);" });
+  checkUnparsable({ "1(a,b);", //
+                    "f(",      //
+                    "f(," });
 }
 
 TEST_F(FuzzyParseTest, QualifiedIDs) {
-  checkToplevel<DeclStmt>("std::vector<int> v;");
-  checkToplevel<DeclStmt>("::std::vector v1;");
-  checkToplevel<DeclStmt>("std::vector<int> v2;");
-  checkToplevel<DeclStmt>("std::vector<int,int> v3;");
-  checkToplevel<DeclStmt>("std::vector<> v4;");
-  checkToplevel<DeclStmt>("std::vector<1> v5;");
-  checkToplevel<DeclStmt>("std::tr1::stl::vector<> v6;");
-  checkToplevel<DeclStmt>("::vector<> v7;");
   checkToplevel<DeclStmt>(
-      "::std::tr1::stl::vector<std::vector<int>, ::std::pair<int,int> > v8;");
-  checkToplevel<DeclStmt>("n::n::n::n::n::a<n::b<c<d<n::n::e,f>,g<h> > > > g;");
-  checkToplevel<DeclStmt>("a::b<c::d> ***e=f::g<1>*h::i<2,j>(::k::l);");
-  checkToplevel<DeclStmt>("auto x = llvm::make_unique<int>(0);");
-  checkParse("auto x = llvm::make_unique<int>(0);",
+      { "std::vector<int> v;",         //
+        "::std::vector v1;",           //
+        "std::vector<int> v2;",        //
+        "std::vector<int,int> v3;",    //
+        "std::vector<> v4;",           //
+        "std::vector<1> v5;",          //
+        "std::tr1::stl::vector<> v6;", //
+        "::vector<> v7;",              //
+        "::std::tr1::stl::vector<std::vector<int>, ::std::pair<int,int> > v8;",
+        "n::n::n::n::n::a<n::b<c<d<n::n::e,f>,g<h> > > > g;",
+        "a::b<c::d> ***e=f::g<1>*h::i<2,j>(::k::l);",
+        "auto x = std::make_unique<int>(0);" });
+
+  checkParse("auto x = std::make_unique<int>(0);",
              checkTypeSeq<Type, VarDecl, VarInitialization, CallExpr, CallExpr,
                           CallExpr, CallExpr, Type, CallExpr, CallExpr,
                           LiteralConstant, CallExpr, DeclStmt>());
-  checkToplevel<ExprLineStmt>("n::f(a::b<x>());");
-  checkToplevel<ExprLineStmt>("n::f<a,1,2>(a::b<2*3>());");
-  checkToplevel<ExprLineStmt>("t<1+b>();");
-  checkToplevel<ExprLineStmt>("t< 1<<2 >();");
-  checkToplevel<ExprLineStmt>("t< (1>2) >();");
+  checkToplevel<ExprLineStmt>({ "n::f(a::b<x>());",          //
+                                "n::f<a,1,2>(a::b<2*3>());", //
+                                "t<1+b>();",                 //
+                                "t< 1<<2 >();",              //
+                                "t< (1>2) >();" });
   checkUnparsable("t<1> 2>();");
 }
 
 TEST_F(FuzzyParseTest, FunctionDeclStmt) {
   const char *Tests[] = {
-    "void f(int,int);", // (enforce line break for clang-highlight)
-    "void g(int i=0);",
+    "void f(int,int);", //
+    "void g(int i=0);", //
     "static std::unique_ptr<VarDecl> parseVarDecl(TokenFilter &TF,"
     "                                             Type *TypeName = 0,"
     "                                             bool NameOptional = false);",
@@ -352,31 +368,33 @@ TEST_F(FuzzyParseTest, FunctionDeclStmt) {
 }
 
 TEST_F(FuzzyParseTest, ReturnStmt) {
-  checkToplevel<ReturnStmt>("return 1;");
-  checkToplevel<ReturnStmt>("return a*b;");
+  checkToplevel<ReturnStmt>({ "return 1;",   //
+                              "return a*b;", //
+                              "return;" });
   checkUnparsable("return return;");
-  checkToplevel<ReturnStmt>("return;");
 }
 
 TEST_F(FuzzyParseTest, StructDecl) {
-  checkFirst<ClassDecl>(
-      { "struct C;", "union C;", "class C{};", "class C{ ><unparsable>< };" });
+  checkFirst<ClassDecl>({ "struct C;",  //
+                          "union C;",   //
+                          "class C{};", //
+                          "class C{ ><unparsable>< };" });
 
   auto checkFirstIsFunctionDecl = [&](StringRef Code) {
     checkFirstOn(Code, [](const Stmt &S, bool Abort) {
       if (Abort)
-        EXPECT_TRUE(llvm::isa<ClassDecl>(S));
-      else if (!llvm::isa<ClassDecl>(S))
+        EXPECT_TRUE(isa<ClassDecl>(S));
+      else if (!isa<ClassDecl>(S))
         return false;
-      const auto &CD = llvm::cast<ClassDecl>(S);
+      const auto &CD = cast<ClassDecl>(S);
       if (Abort)
         EXPECT_EQ(CD.Body.size(), (size_t)1);
       else if (CD.Body.size() != 1)
         return false;
 
       if (Abort)
-        EXPECT_TRUE(llvm::isa<FunctionDecl>(*CD.Body.front()));
-      else if (!llvm::isa<FunctionDecl>(*CD.Body.front()))
+        EXPECT_TRUE(isa<FunctionDecl>(*CD.Body.front()));
+      else if (!isa<FunctionDecl>(*CD.Body.front()))
         return false;
 
       return true;
@@ -396,7 +414,7 @@ TEST_F(FuzzyParseTest, StructDecl) {
 
 TEST_F(FuzzyParseTest, IfStmt) {
   const char *Tests[] = {
-    "if (true) {}",     // (enforce line break for clang-highlight)
+    "if (true) {}",     //
     "if (0) do_sth();", //
     "if (int i=0) {}",  //
     "if (int i=0) {} else do_sth_else();",
@@ -420,11 +438,10 @@ TEST_F(FuzzyParseTest, IfStmtFuzzy) {
 }
 
 TEST_F(FuzzyParseTest, WhileStmt) {
-  checkFirst<WhileStmt>(
-      { "while (true) {}",     // (enforce line break for clang-highlight)
-        "while (0) do_sth();", //
-        "while (int i=0) {}",  //
-      });
+  checkFirst<WhileStmt>({ "while (true) {}",     //
+                          "while (0) do_sth();", //
+                          "while (int i=0) {}",  //
+  });
 }
 
 TEST_F(FuzzyParseTest, ForStmt) {
