@@ -1,0 +1,68 @@
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{clanghighlight}[2014/07/30 v0.1 clang-highlight package for LaTeX.]
+\usepackage{fancyvrb}
+\usepackage{xcolor}
+\usepackage{ifplatform}
+
+\ifwindows
+  \providecommand\DeleteFile[1]{\immediate\write18{del #1}}
+\else
+  \providecommand\DeleteFile[1]{\immediate\write18{rm #1}}
+\fi
+
+\newcommand\ch@style@namespace{\color{teal}}
+\newcommand\ch@style@type{\color[HTML]{228B22}}
+\newcommand\ch@style@keyword{\color{violet}}
+\newcommand\ch@style@comment{\color[HTML]{800000}\itshape}
+\newcommand\ch@style@preprocessor{\color[HTML]{483D8B}}
+\newcommand\ch@style@string{\color[HTML]{DE2E2E}}
+\newcommand\ch@style@char{\color{purple}}
+\newcommand\ch@style@function{\color[HTML]{000080}}
+\newcommand\ch@style@numeric{\color[HTML]{707070}}
+\newcommand\ch@style@variable{\color{black}}
+\newcommand\ch@style@default{\color{black}}
+
+\newcommand\clangHighlightToken[2]{{\expandafter\csname ch@style@#1\endcsname{}#2}}
+
+\providecommand\ch@clanghighlight[1]{clang-highlight #1}
+\newcommand\clanghighlightCmd[1]{\renewcommand\ch@clanghighlight[1]{#1 ##1}}
+\clanghighlightCmd{clang-highlight}
+
+\def\ch@fvopts{}
+\newcommand\cxxset[1]{\def\ch@fvopts{#1}}
+
+\begingroup
+\catcode`\^^M\active%
+\global\def\activeeol{^^M}%
+\endgroup
+
+\def\cxx@[#1]{\def\ch@fvoptsarg{#1}
+  \VerbatimEnvironment\begin{VerbatimOut}[codes={\catcode`\^^I=12}]{\jobname.cc}}
+\def\cxx@noargs#1{\edef\temp{[]\activeeol\string#1}\expandafter\cxx@\temp}
+
+\newenvironment{cxx}%
+{\@ifnextchar[\cxx@\cxx@noargs}%
+{\end{VerbatimOut}%
+\inputcxx[\ch@fvoptsarg]{\jobname.cc}%
+\DeleteFile{\jobname.cc}%
+}
+
+\newcommand\inputcxx[2][]{%
+\protected@xdef\ch@cmd{\ch@clanghighlight{-latex #2 -o \jobname.ch}}
+\IfFileExists{\jobname.ch}{\DeleteFile{\jobname.ch}}{}
+\immediate\write18{\ch@cmd}
+\IfFileExists{\jobname.ch}{%
+  \edef\ch@fvoptsall{\ch@fvopts,#1}%
+  \expandafter\VerbatimInput\expandafter[\ch@fvoptsall,commandchars=\\\{\}]{\jobname.ch}%
+  \DeleteFile{\jobname.ch}}%
+{\PackageError{clanghighlight}{Error executing `\ch@cmd'.}{Make sure%
+  clang-highlight is properly installed or doesn't crash with the given input.}%
+}%
+}
+
+\AtEndOfPackage{
+  \ifnum\pdf@shellescape=1\relax\else
+    \PackageError{clanghighlight}
+     {You must invoke LaTeX with the -shell-escape flag}
+     {Pass the -shell-escape flag to LaTeX.}\fi
+}

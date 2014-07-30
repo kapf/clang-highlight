@@ -1,0 +1,49 @@
+\documentclass{article}
+\usepackage[T1]{fontenc}
+\usepackage{upquote}
+\usepackage{minted}
+\usepackage{listings}
+\usepackage{clanghighlight}
+
+% Note: You might need change the path to clang-highlight
+% \clanghighlightCmd{/path/to/clang-highlight}
+
+\newcommand\pkg[1]{\textsf{#1}}
+
+\begin{document}
+
+Sample code highlighted by the command line tool \verb|clang-highlight| and the
+\LaTeX\ package \pkg{clanghighlight}:
+\begin{cxx}[numbers=left]
+#include <iostream>
+template <typename T, int I> T make();
+int main() /* block */ { // comment
+  const T& x = make<T, 5>("string", 'c');
+}
+\end{cxx}
+% instead of inline, one can use \inputcxx[<options>]{file.cpp}
+% Also, the options are optional.  \begin{cxx} works as does \inputcxx{file}
+
+Same code using \textsf{Pygments} and the package \pkg{minted}:
+\begin{minted}[linenos=true]{c++}
+#include <iostream>
+template <typename T, int I> T make();
+int main() /* block */ { // comment
+  const T& x = make<T, 5>("string", 'c');
+}
+\end{minted}
+Note that \pkg{minted} has some limitations, because \textsf{Pygments} doesn't
+output semantic \LaTeX.  The single quote isn't straight (can be fixed through
+a hack though) and the colors schemes can't be modified from within \LaTeX.
+
+And with \pkg{listings}, the pure \LaTeX\ solution:
+
+\begin{lstlisting}[language=c++,numbers=left]
+#include <iostream>
+template <typename T, int I> T make();
+int main() /* block */ { // comment
+  const T& x = make<T, 5>("string", 'c');
+}
+\end{lstlisting}
+
+\end{document}
