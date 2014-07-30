@@ -37,9 +37,14 @@ Output formats
 
 .. option:: -shtml
 
-   Writes Semantic HTML as output with classes.  The individual tokens have the
-   form ``<span class="ch-typename">int</span>``.  The class can be specified in
+   Writes semantic HTML with CSS selectors.  The individual tokens have the
+   form ``<span class="typename">int</span>``.  The class can be specified in
    a separate style sheet by the user.
+
+.. option:: -latex
+
+   Writes semantic LaTeX for use with the package that is bundled with
+   clang-highlight.  See below.
 
 Further options
 ---------------
@@ -53,6 +58,39 @@ Further options
 .. option:: -dump-ast
 
    Only included for testing the fuzzy parser, will be removed later.
+
+.. option:: -o <file>
+
+   Output to a file instead of standard output.
+
+The LaTeX Package ``clanghighlight``
+------------------------------------
+
+:program:`clang-highlight` can be used as a highlighter for LaTeX code.  The
+file ``clanghighlight.sty`` that is included in this repository provides a
+package for easy usage.  Just put it in the same directory as the ``.tex`` file
+you are writing.
+
+.. code-block:: latex
+
+  \usepackage{clanghighlight} % put this into the preamble
+
+  % You might need to specify the full path to clang-highlight
+  % \clanghighlightCmd{/path/to/clang-highlight}
+
+  % in the document:
+  \begin{cxx}
+  // your code goes here
+  \end{cxx}
+
+  \begin{cxx}[numbers=left] % the options are directly passed to fancyvrb
+  // your code goes here
+  \end{cxx}
+
+  \inputcxx{file.cpp} % use code from a file
+
+This package is only in beta status and some more functionality might be added
+soon.
 
 Comparison to other highlighters
 --------------------------------

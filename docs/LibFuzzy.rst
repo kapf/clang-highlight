@@ -36,7 +36,7 @@ similar as possible to the
 `Clang AST http://clang.llvm.org/docs/IntroductionToTheClangAST.html`, but
 differs because of some design decisions:
 
-* Each AST node contains references to all tokens that belong to him.  This
+* Each AST node contains references to all tokens that belong to it.  This
   implies that by visiting all nodes of the AST of a particular source code, you
   find all the tokens lexed from that code.
 
