@@ -1,0 +1,17 @@
+\documentclass{article}
+\usepackage[T1]{fontenc}
+\usepackage{upquote}
+\usepackage{minted}
+\usepackage{listings}
+\usepackage{clanghighlight}
+
+% Note: You might need change the path to clang-highlight
+% \clanghighlightCmd{/path/to/clang-highlight}
+
+\newcommand\pkg[1]{\textsf{#1}}
+
+\begin{document}
+
+\inputcxx[numbers=left]{../Fuzzy/FuzzyParser.cpp}
+
+\end{document}
