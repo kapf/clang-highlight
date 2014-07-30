@@ -20,6 +20,7 @@ enum class OutputFormat {
   StdoutColored,
   HTML,
   SemanticHTML,
+  LaTeX,
   // TODO: XML, LaTeX, SemanticLaTeX, ...
 };
 
@@ -34,7 +35,9 @@ enum class TokenClass {
   Preprocessor,
   String,
   Char,
-  Other
+  Numeric,
+  Other,
+  Whitespace,
 };
 
 class OutputWriter {
@@ -44,7 +47,8 @@ public:
 };
 
 // \brief Creates a output writer that writes in the specified Format to stdout
-std::unique_ptr<OutputWriter> makeOutputWriter(OutputFormat Format);
+std::unique_ptr<OutputWriter> makeOutputWriter(OutputFormat Format,
+                                               llvm::raw_ostream &OS);
 
 } // end namespace highlight
 } // end namespace clang

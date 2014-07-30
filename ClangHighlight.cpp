@@ -14,6 +14,7 @@
 //===----------------------------------------------------------------------===//
 #include "llvm/Support/Signals.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "clang/Basic/Version.h"
@@ -44,11 +45,17 @@ static cl::opt<OutputFormat> OutputFormatFlag(
     cl::values(clEnumValN(OutputFormat::StdoutColored, "stdout",
                           "write colored stdout"),
                clEnumValN(OutputFormat::HTML, "html", "write html"),
-               clEnumValN(OutputFormat::SemanticHTML, "shtml", "write semantic html"),
+               clEnumValN(OutputFormat::SemanticHTML, "shtml",
+                          "write semantic html"),
+               clEnumValN(OutputFormat::LaTeX, "latex", "write latex"),
                clEnumValEnd),
     cl::cat(ClangHighlightCategory));
 
-static cl::opt<std::string> FileName(cl::Positional, cl::desc("<file>]"),
+cl::opt<std::string> OutputFilename("o", cl::desc("Write output to <file>"),
+                                    cl::value_desc("file"),
+                                    cl::cat(ClangHighlightCategory));
+
+static cl::opt<std::string> FileName(cl::Positional, cl::desc("<file>"),
                                      cl::Required,
                                      cl::cat(ClangHighlightCategory));
 
@@ -58,15 +65,28 @@ static void PrintVersion() {
 }
 
 static bool parserHighlight(StringRef File, OutputFormat Format,
-                            bool IdentifiersOnly, bool DumpAST) {
+                            StringRef OutFile, bool IdentifiersOnly,
+                            bool DumpAST) {
   auto Source = llvm::MemoryBuffer::getFileOrSTDIN(File);
   if (std::error_code err = Source.getError()) {
     llvm::errs() << err.message() << '\n';
     return true;
   }
 
-  highlight(std::move(*Source), File, makeOutputWriter(Format), IdentifiersOnly,
-            DumpAST);
+  if (!OutFile.empty()) {
+    std::string ErrMsg;
+    raw_fd_ostream Out(std::string(OutFile).c_str(), ErrMsg,
+                       llvm::sys::fs::F_Text);
+    if (!ErrMsg.empty()) {
+      llvm::errs() << ErrMsg << '\n';
+      return true;
+    }
+    highlight(std::move(*Source), File, makeOutputWriter(Format, Out),
+              IdentifiersOnly, DumpAST);
+  } else {
+    highlight(std::move(*Source), File, makeOutputWriter(Format, llvm::outs()),
+              IdentifiersOnly, DumpAST);
+  }
   return false;
 }
 
@@ -90,8 +110,8 @@ int main(int argc, const char **argv) {
 
   bool Error = false;
 
-  Error |=
-      parserHighlight(FileName, OutputFormatFlag, IdentifiersOnly, DumpAST);
+  Error |= parserHighlight(FileName, OutputFormatFlag, OutputFilename,
+                           IdentifiersOnly, DumpAST);
 
   return Error ? 1 : 0;
 }

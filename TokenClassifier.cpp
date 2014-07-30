@@ -63,12 +63,16 @@ TokenClass convertTokenKindToTokenClass(tok::TokenKind TK) {
     return TokenClass::Char;
   if (isStringLiteral(TK))
     return TokenClass::String;
+  if (TK == tok::numeric_constant)
+    return TokenClass::Numeric;
   if (isKeyword(TK))
     return TokenClass::Keyword;
   if (TK == tok::annot_typename)
     return TokenClass::Type;
   if (TK == tok::comment)
     return TokenClass::Comment;
+  if (TK == tok::unknown || TK == tok::eod)
+    return TokenClass::Whitespace;
   return TokenClass::Other;
 }
 
@@ -138,7 +142,7 @@ void highlight(std::unique_ptr<llvm::MemoryBuffer> Source, StringRef FileName,
 
     ThisTokenStart = SourceMgr.getCharacterData(ThisTok.getLocation());
     if (LastTokenStart) {
-      if (Class == TokenClass::NONE)
+      if (Class == TokenClass::NONE || LastTok.getKind() == tok::eod)
         Class = convertTokenKindToTokenClass(LastTok.getKind());
       OW->writeToken(StringRef(LastTokenStart, ThisTokenStart - LastTokenStart),
                      Class);

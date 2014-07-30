@@ -47,6 +47,8 @@ static StdoutFormatInfo getFormatInfo(TokenClass Class) {
   case TokenClass::String:
   case TokenClass::Char:
     return { raw_ostream::MAGENTA };
+  case TokenClass::Numeric:
+    return { raw_ostream::BLUE, true };
   case TokenClass::Function:
     return { raw_ostream::BLACK, true };
   default:
@@ -69,6 +71,8 @@ static const char *getSpanStyle(TokenClass Class) {
     return "color:red";
   case TokenClass::Char:
     return "color:magenta";
+  case TokenClass::Numeric:
+    return "color:DarkSlateGray";
   case TokenClass::Function:
     return "color:black;font-style:italic";
   default:
@@ -76,55 +80,68 @@ static const char *getSpanStyle(TokenClass Class) {
   }
 }
 
-static const char *getSpanClass(TokenClass Class) {
+static const char *getClassName(TokenClass Class) {
   switch (Class) {
   case TokenClass::Namespace:
-    return "ch-namespace";
+    return "namespace";
   case TokenClass::Type:
-    return "ch-type";
+    return "type";
   case TokenClass::Keyword:
-    return "ch-keyword";
+    return "keyword";
   case TokenClass::Comment:
-    return "ch-comment";
+    return "comment";
   case TokenClass::Preprocessor:
-    return "ch-preprocessor";
+    return "preprocessor";
   case TokenClass::String:
-    return "ch-string";
+    return "string";
   case TokenClass::Char:
-    return "ch-char";
+    return "char";
   case TokenClass::Function:
-    return "ch-function";
+    return "function";
+  case TokenClass::Numeric:
+    return "numeric";
   case TokenClass::Variable:
-    return "ch-variable";
+    return "variable";
   default:
-    return "ch-default";
+    return "default";
   }
 }
 
 namespace {
 class XmlEscaper {
   StringRef S;
+
 public:
   XmlEscaper(StringRef S) : S(S) {};
 
-  friend raw_ostream& operator<<(raw_ostream& OS, const XmlEscaper &HE) {
+  friend raw_ostream &operator<<(raw_ostream &OS, const XmlEscaper &HE) {
     for (char C : HE.S)
       switch (C) {
-      case '&': OS << "&amp;"; break;
-      case '\'': OS << "&apos;"; break;
-      case '"': OS << "&quot;"; break;
-      case '<': OS << "&lt;"; break;
-      case '>': OS << "&gt;"; break;
-      default: OS << C; break;
+      case '&':
+        OS << "&amp;";
+        break;
+      case '\'':
+        OS << "&apos;";
+        break;
+      case '"':
+        OS << "&quot;";
+        break;
+      case '<':
+        OS << "&lt;";
+        break;
+      case '>':
+        OS << "&gt;";
+        break;
+      default:
+        OS << C;
+        break;
       }
     return OS;
   }
 };
 } // end anonymous namespace
 
-XmlEscaper xmlEscaped(StringRef S) {
-  return XmlEscaper(S);
-}
+XmlEscaper xmlEscaped(StringRef S) { return XmlEscaper(S); }
 
 namespace {
 class ColorStreamWriter : public OutputWriter {
@@ -167,37 +184,103 @@ class SemanticHtmlWriter : public OutputWriter {
 
 public:
   SemanticHtmlWriter(raw_ostream &OS) : OS(OS) {
-    OS << R"XX(<style type="text/css">
-.clanghighlight span.ch-namespace { color:green }
-.clanghighlight span.ch-type { color:green }
-.clanghighlight span.ch-keyword { color:blue }
-.clanghighlight span.ch-comment { color:darkred }
-.clanghighlight span.ch-preprocessor { color:purple }
-.clanghighlight span.ch-string { color:red }
-.clanghighlight span.ch-char { color:magenta }
-.clanghighlight span.ch-function { color:black;font-style=italic }
-.clanghighlight span.ch-variable { color:black }
-.clanghighlight span.ch-default { color:black }
+    OS << R"(<style type="text/css">
+.clanghighlight span.namespace { color:green }
+.clanghighlight span.type { color:green }
+.clanghighlight span.keyword { color:blue }
+.clanghighlight span.comment { color:darkred }
+.clanghighlight span.preprocessor { color:purple }
+.clanghighlight span.string { color:red }
+.clanghighlight span.char { color:magenta }
+.clanghighlight span.numeric { color:DarkSlateGray }
+.clanghighlight span.function { color:black;font-style=italic }
+.clanghighlight span.variable { color:black }
+.clanghighlight span.default { color:black }
 </style>
-<p style="white-space:pre" class="clanghighlight"><tt>)XX";
+<p style="white-space:pre" class="clanghighlight"><tt>)";
   }
   ~SemanticHtmlWriter() { OS << "</tt></p>"; }
 
   void writeToken(StringRef Text, TokenClass Class) override {
-    OS << R"(<span class=")" << getSpanClass(Class) << R"(">)"
+    OS << R"(<span class=")" << getClassName(Class) << R"(">)"
        << xmlEscaped(Text) << "</span>";
   }
 };
 } // end anonymous namespace
 
-std::unique_ptr<OutputWriter> makeOutputWriter(OutputFormat Format) {
+namespace {
+class LaTeXEscaper {
+  StringRef S;
+
+public:
+  LaTeXEscaper(StringRef S) : S(S) {};
+
+  friend raw_ostream &operator<<(raw_ostream &OS, const LaTeXEscaper &HE) {
+    for (char C : HE.S)
+      switch (C) {
+      case '{':
+      case '}':
+      case '_':
+      case '&':
+      case '#':
+      case '%':
+      case '$':
+        OS << "{\\" << C << "}";
+        break;
+      case '^':
+        OS << "{\\^{}}";
+        break;
+      case '\\':
+        OS << "{\\textbackslash}";
+        break;
+      case '<':
+        OS << "{\\textless}";
+        break;
+      case '>':
+        OS << "{\\textgreater}";
+        break;
+      case '~':
+        OS << "{\\textasciitilde}";
+        break;
+      default:
+        OS << C;
+      }
+    return OS;
+  }
+};
+} // end anonymous namespace
+
+LaTeXEscaper latexEscaped(StringRef S) { return LaTeXEscaper(S); }
+
+namespace {
+class LaTeXWriter : public OutputWriter {
+  raw_ostream &OS;
+
+public:
+  LaTeXWriter(raw_ostream &OS) : OS(OS) {}
+  ~LaTeXWriter() {}
+
+  void writeToken(StringRef Text, TokenClass Class) override {
+    if (Class == TokenClass::Whitespace)
+      OS << latexEscaped(Text);
+    else
+      OS << "\\clangHighlightToken{" << getClassName(Class) << "}{"
+         << latexEscaped(Text) << "}";
+  }
+};
+} // end anonymous namespace
+
+std::unique_ptr<OutputWriter> makeOutputWriter(OutputFormat Format,
+                                               raw_ostream &OS) {
   switch (Format) {
   case OutputFormat::StdoutColored:
-    return std::unique_ptr<OutputWriter>(new ColorStreamWriter(llvm::outs()));
+    return std::unique_ptr<OutputWriter>(new ColorStreamWriter(OS));
   case OutputFormat::HTML:
-    return std::unique_ptr<OutputWriter>(new HtmlWriter(llvm::outs()));
+    return std::unique_ptr<OutputWriter>(new HtmlWriter(OS));
   case OutputFormat::SemanticHTML:
-    return std::unique_ptr<OutputWriter>(new SemanticHtmlWriter(llvm::outs()));
+    return std::unique_ptr<OutputWriter>(new SemanticHtmlWriter(OS));
+  case OutputFormat::LaTeX:
+    return std::unique_ptr<OutputWriter>(new LaTeXWriter(OS));
   default:
     llvm_unreachable("invalid flag");
   }
