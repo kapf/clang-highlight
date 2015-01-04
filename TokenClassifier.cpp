@@ -28,7 +28,7 @@ LangOptions getFormattingLangOpts(bool Cpp03 = false) {
   LangOptions LangOpts;
   LangOpts.CPlusPlus = 1;
   LangOpts.CPlusPlus11 = Cpp03 ? 0 : 1;
-  LangOpts.CPlusPlus1y = Cpp03 ? 0 : 1;
+  LangOpts.CPlusPlus14 = Cpp03 ? 0 : 1;
   LangOpts.LineComment = 1;
   LangOpts.Bool = 1;
   LangOpts.ObjC1 = 1;
@@ -90,7 +90,7 @@ void highlight(std::unique_ptr<llvm::MemoryBuffer> Source, StringRef FileName,
   llvm::MemoryBuffer *Buf = Source.release(); // SourceMgr owns Buf for us
   const clang::FileEntry *Entry =
       Files.getVirtualFile(FileName, Buf->getBufferSize(), 0);
-  SourceMgr.overrideFileContents(Entry, Buf);
+  SourceMgr.overrideFileContents(Entry, Buf, false);
   FileID ID =
       SourceMgr.createFileID(Entry, SourceLocation(), clang::SrcMgr::C_User);
 

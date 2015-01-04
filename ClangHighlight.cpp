@@ -74,11 +74,11 @@ static bool parserHighlight(StringRef File, OutputFormat Format,
   }
 
   if (!OutFile.empty()) {
-    std::string ErrMsg;
+    std::error_code ErrMsg;
     raw_fd_ostream Out(std::string(OutFile).c_str(), ErrMsg,
                        llvm::sys::fs::F_Text);
-    if (!ErrMsg.empty()) {
-      llvm::errs() << ErrMsg << '\n';
+    if (ErrMsg) {
+      llvm::errs() << ErrMsg.message() << '\n';
       return true;
     }
     highlight(std::move(*Source), File, makeOutputWriter(Format, Out),
